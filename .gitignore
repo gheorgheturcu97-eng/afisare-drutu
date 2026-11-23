@@ -1,0 +1,8 @@
+node_modules/
+dist/
+data.json
+public/uploads/
+iphone/node_modules/
+iphone/ios/
+.DS_Store
+*.log

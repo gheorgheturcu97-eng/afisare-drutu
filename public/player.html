@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Afișare Druțu — ecran</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  #stage{position:fixed;inset:0;overflow:hidden;background:#000}
+  #dim{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none;z-index:20;transition:opacity 1.5s}
+  .layer{position:absolute;inset:0;opacity:0;transition:opacity .6s ease}
+  .layer.on{opacity:1}
+  .layer img,.layer video,.layer canvas{width:100%;height:100%;object-fit:contain;display:block;background:#000}
+  .layer iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000}
+  .text{position:absolute;inset:0;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:4% 6%;box-sizing:border-box;line-height:1.08;word-break:normal;overflow-wrap:normal}
+  .text .big{font-weight:800;white-space:pre-wrap}
+  .text .small{opacity:.92;margin-top:.25em;white-space:pre-wrap}
+  #ticker{position:absolute;left:0;right:0;bottom:0;height:12%;background:rgba(0,0,0,.8);color:#fff;font-size:calc(var(--h) * .075);font-weight:700;display:none;align-items:center;overflow:hidden;white-space:nowrap;z-index:5}
+  #ticker span{display:inline-block;padding-left:var(--w,100vw);animation:scroll linear infinite}
+  @keyframes scroll{to{transform:translateX(-100%)}}
+  #clock{position:absolute;top:3%;right:2%;z-index:6;color:#fff;font-size:calc(var(--h) * .09);font-weight:700;background:rgba(0,0,0,.55);padding:0 .35em;border-radius:.2em;display:none;font-variant-numeric:tabular-nums}
+  #ident{position:absolute;inset:0;z-index:30;display:none;align-items:center;justify-content:center;flex-direction:column;background:#16a34a;color:#fff;font-weight:900;text-align:center;font-size:calc(var(--h) * .22);line-height:1}
+  #ident small{font-size:.35em;font-weight:700;margin-top:.3em}
+  #msg{position:fixed;left:8px;bottom:6px;color:#666;font-size:12px;z-index:40}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="clock"></div>
+  <div id="ticker"><span></span></div>
+  <div id="dim"></div>
+  <div id="ident">✓ PANOU<small>acesta e ecranul ales</small></div>
+</div>
+<div id="msg"></div>
+<script src="common.js"></script>
+<script>
+const P = window.Panou;
+let state = null, cur = null, lastId = null, playedLive = null;
+const stage = document.getElementById('stage');
+
+// ---------- YouTube ----------
+let ytReady = false; const ytWaiters = [];
+window.onYouTubeIframeAPIReady = () => { ytReady = true; ytWaiters.splice(0).forEach(f => f()); };
+(() => { const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(s); })();
+function whenYT(ok, fail) { if (ytReady) return ok(); ytWaiters.push(ok); setTimeout(() => { if (!ytReady) fail(); }, 15000); }
+
+// ---------- PDF (pdf.js, încărcat doar când e nevoie) ----------
+let pdfLib = null;
+function loadPdfJs() {
+  if (pdfLib) return pdfLib;
+  pdfLib = new Promise((ok, fail) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    s.onload = () => { const l = window['pdfjs-dist/build/pdf']; l.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; ok(l); };
+    s.onerror = fail; document.head.appendChild(s);
+  });
+  return pdfLib;
+}
+
+function fitText(box) {
+  let lo = 6, hi = 600;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1; box.style.fontSize = mid + 'px';
+    (box.scrollHeight <= box.clientHeight && box.scrollWidth <= box.clientWidth) ? lo = mid : hi = mid;
+  }
+  box.style.fontSize = lo + 'px';
+}
+
+const imgSec = () => (state?.settings?.imageSeconds || 10);
+
+// ---------- afișarea unui element ----------
+function play(item, mode, onDone) {
+  const layer = document.createElement('div'); layer.className = 'layer';
+  const timers = []; let yt = null, done = false;
+  const finish = () => { if (done) return; done = true; onDone(); };
+  const dur = item.duration > 0 ? item.duration * 1000 : 0;
+  const still = dur || imgSec() * 1000;
+
+  if (item.type === 'youtube' || item.type === 'ytlist') {
+    const vid = P.ytId(item.url), list = P.ytListId(item.url);
+    if (!vid && !list) setTimeout(finish, 300);
+    else {
+      const host = document.createElement('div'); layer.appendChild(host);
+      whenYT(() => {
+        if (done) return;
+        const vars = { autoplay: 1, controls: 0, rel: 0, playsinline: 1, iv_load_policy: 3, disablekb: 1, fs: 0, mute: item.mute ? 1 : 0 };
+        if (item.type === 'ytlist' && list) { vars.listType = 'playlist'; vars.list = list; }
+        yt = new YT.Player(host, {
+          width: '100%', height: '100%', ...(item.type === 'ytlist' && list ? {} : { videoId: vid }), playerVars: vars,
+          events: {
+            onReady: e => { item.mute ? e.target.mute() : e.target.unMute(); e.target.playVideo();
+              timers.push(setTimeout(() => { try { if (e.target.getPlayerState() !== 1) { e.target.mute(); e.target.playVideo(); } } catch {} }, 3000)); },
+            onStateChange: e => {
+              if (e.data !== YT.PlayerState.ENDED) return;
+              if (item.type === 'ytlist') { const l = e.target.getPlaylist() || [], i = e.target.getPlaylistIndex(); if (i < l.length - 1) return; }
+              finish();
+            },
+            onError: () => { if (item.type === 'ytlist') { try { yt.nextVideo(); return; } catch {} } finish(); },
+          },
+        });
+      }, finish);
+      if (dur) timers.push(setTimeout(finish, dur));
+    }
+  } else if (item.type === 'image') {
+    const img = new Image(); img.src = item.url; img.onerror = () => setTimeout(finish, 500);
+    layer.appendChild(img); timers.push(setTimeout(finish, still));
+  } else if (item.type === 'video') {
+    const v = document.createElement('video');
+    v.src = item.url; v.autoplay = true; v.playsInline = true; v.muted = !!item.mute;
+    if (dur) { v.loop = true; timers.push(setTimeout(finish, dur)); } else v.onended = finish;
+    v.onerror = () => setTimeout(finish, 500);
+    v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
+    layer.appendChild(v);
+  } else if (item.type === 'pdf') {
+    const cv = document.createElement('canvas'); layer.appendChild(cv);
+    loadPdfJs().then(lib => lib.getDocument(item.url).promise).then(async doc => {
+      for (let n = 1; n <= doc.numPages && !done; n++) {
+        const page = await doc.getPage(n);
+        const box = stage.getBoundingClientRect(), vp0 = page.getViewport({ scale: 1 });
+        const scale = Math.min(box.width / vp0.width, box.height / vp0.height) * (window.devicePixelRatio || 1);
+        const vp = page.getViewport({ scale });
+        cv.width = vp.width; cv.height = vp.height;
+        await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+        await new Promise(r => timers.push(setTimeout(r, still)));
+      }
+      finish();
+    }).catch(() => setTimeout(finish, 500));
+  } else if (item.type === 'web') {
+    const f = document.createElement('iframe'); f.src = item.url; f.allow = 'autoplay; fullscreen';
+    layer.appendChild(f); timers.push(setTimeout(finish, still));
+  } else {
+    const t = document.createElement('div'); t.className = 'text';
+    t.style.background = P.bgOf(item.bg); t.style.color = item.color || '#fff';
+    const big = document.createElement('div'); big.className = 'big'; big.textContent = 'text' in item ? item.text : (item.title || '');
+    t.appendChild(big);
+    if (item.sub) { const sm = document.createElement('div'); sm.className = 'small'; sm.style.fontSize = '.42em'; sm.textContent = item.sub; t.appendChild(sm); }
+    layer.appendChild(t);
+    requestAnimationFrame(() => fitText(t));
+    timers.push(setTimeout(finish, still));
+  }
+
+  stage.insertBefore(layer, document.getElementById('clock'));
+  requestAnimationFrame(() => requestAnimationFrame(() => layer.classList.add('on')));
+  const old = cur;
+  cur = { layer, item, mode, cleanup() { done = true; timers.forEach(clearTimeout); try { yt && yt.destroy(); } catch {} const v = layer.querySelector('video'); if (v) { v.pause(); v.removeAttribute('src'); v.load(); } layer.remove(); } };
+  if (old) setTimeout(() => old.cleanup(), 700);
+  if (mode !== 'dark') fetch('/api/now', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: item.id || '', text: (item.title || item.text || item.url || '').slice(0, 200) }) }).catch(() => {});
+}
+
+const playlist = () => (state?.items || []).filter(i => P.activeAt(i, new Date()));
+
+function next(dir = 1) {
+  const list = playlist();
+  if (!list.length) return dark('');
+  let i = list.findIndex(x => x.id === lastId);
+  const item = list[((i < 0 ? (dir > 0 ? -1 : 0) : i) + dir + list.length) % list.length];
+  lastId = item.id;
+  play(item, 'list', () => state?.settings?.rotate === false ? replay(item) : next());
+}
+function replay(item) { if (playlist().some(x => x.id === item.id)) play(item, 'list', () => state?.settings?.rotate === false ? replay(item) : next()); else next(); }
+function startLive(live) {
+  playedLive = live.liveId;
+  play(live, 'live', () => { if (state?.live?.liveId === live.liveId && state.live.loop) startLive(state.live); else next(); });
+}
+function dark(title) { if (cur?.mode === 'dark') return; play({ type: 'text', title, text: '', bg: '#000000', duration: 86400 }, 'dark', () => {}); }
+
+// ---------- reacție la schimbări ----------
+function onState(s) {
+  state = s; applyOverlays();
+  if (s.black || !P.panelOpen(s.settings, new Date())) return dark('');
+  if (s.live && s.live.liveId !== playedLive) return startLive(s.live);
+  if (!s.live && cur?.mode === 'live') return next();
+  if (!cur || cur.mode === 'dark') return next();
+  if (cur.mode === 'list') {
+    const now = s.items.find(x => x.id === cur.item.id);
+    if (!now || !P.activeAt(now, new Date())) return next();
+    if (JSON.stringify(now) !== JSON.stringify(cur.item)) { const l = playlist(), k = l.findIndex(x => x.id === now.id); lastId = k > 0 ? l[k - 1].id : l[l.length - 1].id; return next(); }
+  }
+}
+setInterval(() => {
+  if (!state) return;
+  applyBrightness();
+  if (state.black || !P.panelOpen(state.settings, new Date())) dark('');
+  else if (cur?.mode === 'dark') next();
+  else if (cur?.mode === 'list' && !P.activeAt(cur.item, new Date())) next();
+}, 15000);
+
+// ---------- luminozitate, zonă, bandă, ceas ----------
+function applyBrightness() {
+  const st = state.settings, d = new Date();
+  const night = P.inRange(st.nightFrom, st.nightTo, d.getHours() * 60 + d.getMinutes());
+  document.getElementById('dim').style.opacity = String(1 - (night ? st.nightBrightness : st.brightness) / 100);
+}
+let tickerText = null;
+function applyOverlays() {
+  const st = state.settings, a = st.area || {};
+  if (a.w > 0 && a.h > 0) Object.assign(stage.style, { left: a.x + 'px', top: a.y + 'px', width: a.w + 'px', height: a.h + 'px', right: 'auto', bottom: 'auto' });
+  else Object.assign(stage.style, { left: 0, top: 0, width: '100%', height: '100%' });
+  stage.style.setProperty('--h', stage.clientHeight + 'px'); stage.style.setProperty('--w', stage.clientWidth + 'px');
+  applyBrightness();
+  const tk = document.getElementById('ticker'), span = tk.querySelector('span');
+  const txt = (st.ticker || '').split('\n').map(x => x.trim()).filter(Boolean).join('   •   ');
+  if (txt !== tickerText || tk.dataset.speed != st.tickerSpeed) {
+    tickerText = txt; tk.dataset.speed = st.tickerSpeed;
+    tk.style.display = txt ? 'flex' : 'none'; span.textContent = txt;
+    if (txt) requestAnimationFrame(() => { span.style.animationDuration = (span.offsetWidth / (st.tickerSpeed || 120)) + 's'; });
+  }
+  document.getElementById('clock').style.display = st.showClock ? 'block' : 'none';
+}
+addEventListener('resize', () => state && applyOverlays());
+setInterval(() => { document.getElementById('clock').textContent = new Date().toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit' }); }, 1000);
+
+// ---------- conexiune ----------
+const msg = document.getElementById('msg');
+const es = new EventSource('/api/events?role=player');
+es.addEventListener('state', e => { msg.textContent = ''; onState(JSON.parse(e.data)); });
+es.addEventListener('control', e => {
+  const { cmd } = JSON.parse(e.data);
+  if (cmd === 'next') next(1); else if (cmd === 'prev') next(-1);
+});
+es.addEventListener('identify', () => { const el = document.getElementById('ident'); el.style.display = 'flex'; clearTimeout(el._t); el._t = setTimeout(() => el.style.display = 'none', 5000); });
+es.onerror = () => { msg.textContent = 'Se reconectează…'; };
+document.addEventListener('click', () => document.documentElement.requestFullscreen?.().catch(() => {}));
+</script>
+</body>
+</html>
