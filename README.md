@@ -91,4 +91,4 @@ npm run dist:win     # instalator Windows
 npm run dist:mac     # .dmg pentru Mac (rulează pe macOS)
 ```
 
-Fișierele de instalare se construiesc automat pe GitHub (Actions) pentru Windows și Mac. Pentru o versiune nouă: schimbă `version` în `package.json`, apoi `git tag v1.0.1 && git push --tags`. Se creează singur un Release cu fișierele.
+Fișierele de instalare se construiesc automat pe GitHub (Actions) pentru Windows și Mac. Pentru o versiune nouă schimbă doar `version` în `package.json` (ex. `1.0.1`) și urcă modificarea pe `main`. Se creează singur un Release cu fișierele.

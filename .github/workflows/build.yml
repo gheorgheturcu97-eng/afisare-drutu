@@ -2,7 +2,8 @@ name: Build
 
 # Construiește aplicația pentru Windows și Mac.
 # - la fiecare push: fișierele apar la Actions → rularea → Artifacts
-# - la un tag v* (ex. v1.0.1): se creează automat un Release cu fișierele de instalare
+# - la fiecare push pe main: se creează/actualizează Release-ul v<versiune din package.json>
+#   (pentru o versiune nouă schimbi doar "version" în package.json)
 on:
   push:
     branches: [main]
@@ -41,9 +42,19 @@ jobs:
             dist/*.dmg
             dist/*.zip
           if-no-files-found: error
-      - if: startsWith(github.ref, 'refs/tags/v')
+      - name: Versiune
+        id: ver
+        shell: bash
+        run: echo "v=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      - if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.ver.outputs.v }}
+          name: Afișare Druțu ${{ steps.ver.outputs.v }}
+          body: |
+            **Windows:** `.exe` = instalator, `.zip` = fără instalare.
+            **Mac:** `arm64` = M1–M4, `x64` = Intel. La prima deschidere: Setări sistem → Confidențialitate și securitate → Deschide oricum.
+            **iPhone:** vezi GHID-IPHONE.md.
           files: |
             dist/*.exe
             dist/*.dmg
