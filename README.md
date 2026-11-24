@@ -47,6 +47,7 @@ TB60 trebuie să fie în **mod sincron (HDMI)**: în ViPlex Express mergi la Scr
 
 - **În aceeași rețea Wi-Fi:** deschide în Safari adresa din aplicația de pe PC (**Setări → Conectează telefonul**), de exemplu `http://192.168.1.50:8080`, și introdu PIN-ul. Apoi alege Share → **Adaugă pe ecranul principal**.
 - **De acasă:** instalează **Tailscale** (gratuit) pe MINIX și pe iPhone, cu același cont. Pe MINIX rulează o dată, în Command Prompt: `tailscale serve --bg 8080`. Primești o adresă `https://minix.….ts.net` care merge de oriunde.
+- **Din orice browser, de oriunde din lume (fără nimic instalat pe telefon):** întâi pune o parolă lungă în aplicație (**Setări → Parola de acces**), apoi pe PC-ul panoului rulează o dată `tailscale funnel --bg 8080`. Adresa `https://….ts.net` merge atunci de pe orice telefon sau calculator. Pentru oprire: `tailscale funnel --bg off` (sau `tailscale funnel reset`).
 - **Aplicația iPhone adevărată:** vezi `GHID-IPHONE.md`.
 
 ## 4. Cum se folosește

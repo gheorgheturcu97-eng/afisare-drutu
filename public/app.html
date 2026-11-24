@@ -143,9 +143,9 @@ label.l{display:block;font-size:13px;color:var(--mut);margin:0 0 6px}
 <!-- ====== LOGIN ====== -->
 <div id="login" class="wrap hidden" style="max-width:360px;padding-top:16vh;text-align:center">
   <div class="h1">Afișare Druțu</div>
-  <p class="mut">Introdu PIN-ul afișat pe PC-ul panoului.</p>
+  <p class="mut">Introdu PIN-ul sau parola (le vezi pe PC-ul panoului, la iconița de lângă ceas).</p>
   <form id="loginForm" style="display:flex;flex-direction:column;gap:12px">
-    <input id="pinIn" type="password" inputmode="numeric" autocomplete="current-password" maxlength="12" style="text-align:center;font-size:28px;letter-spacing:8px;min-height:60px">
+    <input id="pinIn" type="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="64" style="text-align:center;font-size:22px;letter-spacing:3px;min-height:60px">
     <button class="btn pri">Intră</button>
   </form>
   <p id="loginErr" style="color:#ff8a80"></p>
@@ -249,7 +249,7 @@ function start() {
   if (location.hash.startsWith('#conectat-')) { const p = location.hash.slice(10); history.replaceState(null, '', location.pathname); setTimeout(() => { toast((p === 'youtube' ? 'YouTube' : 'Canva') + ' conectat ✓'); p === 'youtube' ? openYouTube() : openCanva(); }, 600); }
 }
 (async () => {
-  const hp = location.hash.match(/^#pin=(\d+)/); if (hp) { PIN = hp[1]; history.replaceState(null, '', location.pathname); }
+  const hp = location.hash.match(/^#pin=([^&]+)/); if (hp) { PIN = decodeURIComponent(hp[1]); history.replaceState(null, '', location.pathname); }
   if (/[?&]app=ios/.test(location.search)) localStorage.setItem('panou.ios', '1');
   if (PIN) { try { await login(PIN); return start(); } catch {} } show('login'); })();
 
@@ -823,9 +823,15 @@ function openSettings() {
           : '<div class="small">Conectarea se face o singură dată de pe PC-ul panoului (deschide aplicația acolo sau prin AnyDesk).</div>') : ''}
         <div class="small">Unde găsești Client ID / Secret: vezi „GHID-CONTURI.md” din folderul aplicației.</div>
       </div>
+      <div class="glass card"><b style="color:#fff">Parola de acces</b><div class="mut">Dacă deschizi aplicația de oriunde (prin internet), pune o parolă lungă în locul PIN-ului de 6 cifre. Minim 6 caractere, recomandat 12+, fără diacritice și fără spații.</div>
+        <input id="sPin1" type="password" placeholder="Parola nouă" autocomplete="new-password" autocapitalize="off" maxlength="64">
+        <input id="sPin2" type="password" placeholder="Repetă parola" autocomplete="new-password" autocapitalize="off" maxlength="64">
+        <button class="btn pri press" id="sPinSave">Schimbă parola</button>
+        <div class="small">Pe celelalte telefoane va trebui introdusă parola nouă.</div>
+      </div>
       <div class="glass card"><b style="color:#fff">Conectează telefonul</b><div id="sInfo" class="mut">…</div>
         <div class="row" style="gap:8px">${localStorage.getItem('panou.ios') ? '<a class="btn press" style="flex:1;display:flex;align-items:center;justify-content:center;text-decoration:none" href="capacitor://localhost/?schimba=1">Schimbă PC-ul panoului</a>' : ''}<button class="btn danger press" id="sOut" style="flex:1">Ieșire</button></div></div>`;
-    api('GET', '/api/info').then(i => { const el = $('#sInfo'); if (el) el.innerHTML = `Pe iPhone deschide (sau pune în aplicația Panou):<br>${i.addresses.map(a => `<b style="color:#fff">http://${a}:${i.port}</b>`).join('<br>') || '—'}<br>PIN: <b style="color:#fff;letter-spacing:2px">${i.pin}</b><br><span class="small">De acasă: adresa Tailscale a PC-ului (vezi ghidul).</span>`; }).catch(() => {});
+    api('GET', '/api/info').then(i => { const el = $('#sInfo'); if (el) el.innerHTML = `Pe iPhone deschide (sau pune în aplicația Panou):<br>${i.addresses.map(a => `<b style="color:#fff">http://${a}:${i.port}</b>`).join('<br>') || '—'}<br>PIN / parolă: <b style="color:#fff;letter-spacing:1px">${esc(i.pin)}</b><br><span class="small">De acasă: adresa Tailscale a PC-ului (vezi ghidul).</span>`; }).catch(() => {});
     $('#sClk').onclick = () => { settings({ showClock: !S.settings.showClock }); draw(); };
     let tkT; $('#sTk').oninput = e => { clearTimeout(tkT); tkT = setTimeout(() => settings({ ticker: e.target.value }), 500); };
     $('#sArea').onclick = () => { settings({ area: { x: +$('#ax').value, y: +$('#ay').value, w: +$('#aw').value, h: +$('#ah').value } }); toast('Zona aplicată pe panou'); };
@@ -837,6 +843,14 @@ function openSettings() {
     });
     $('#stBody').querySelectorAll('[data-disc]').forEach(b => b.onclick = () => api('PUT', '/api/accounts', { [b.dataset.disc]: { disconnect: true } }).then(() => toast('Deconectat')));
     $('#sOut').onclick = () => { closeView(); logout(); };
+    $('#sPinSave').onclick = async () => {
+      const a = $('#sPin1').value.trim(), b = $('#sPin2').value.trim();
+      if (a.length < 6) return toast('Parola trebuie să aibă minim 6 caractere');
+      if (a !== b) return toast('Cele două parole nu sunt la fel');
+      if (!/^[\x21-\x7e]+$/.test(a)) return toast('Fără spații și fără diacritice (ă, â, î, ș, ț)');
+      try { await api('POST', '/api/pin', { pin: a }); PIN = a; localStorage.setItem('panou.pin', a); $('#sPin1').value = $('#sPin2').value = ''; toast('Parola a fost schimbată'); draw(); }
+      catch (e) { toast(e.message); }
+    };
   };
   openView('settings', `<div class="row"><button class="back" data-close>‹ Înapoi</button></div><div class="h1">Setări</div><div id="stBody" style="display:flex;flex-direction:column;gap:12px"></div>`, false, draw);
   view.refresh = () => { if (!document.activeElement?.matches('input,textarea')) draw(); };

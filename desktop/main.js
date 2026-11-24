@@ -65,7 +65,7 @@ function openControl() {
   const prim = screen.getPrimaryDisplay().workArea;
   control = new BrowserWindow({ width: Math.min(1100, prim.width), height: Math.min(860, prim.height), x: prim.x + 40, y: prim.y + 40,
     title: 'Afișare Druțu', icon: ICON, backgroundColor: '#070b1e', autoHideMenuBar: true });
-  control.loadURL(URL + '/app.html#pin=' + server.pin());   // pe PC-ul panoului intră direct, fără PIN
+  control.loadURL(URL + '/app.html#pin=' + encodeURIComponent(server.pin()));   // pe PC-ul panoului intră direct, fără PIN
   control.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });   // Canva/YouTube în browser
   control.on('closed', () => { control = null; });
 }
@@ -79,15 +79,21 @@ app.whenReady().then(() => {
     openPlayer(); openControl();
     const img = nativeImage.createFromPath(ICON).resize({ width: 18, height: 18 });
     tray = new Tray(img);
-    tray.setToolTip(`Afișare Druțu · PIN ${server.pin()}`);
-    tray.setContextMenu(Menu.buildFromTemplate([
-      { label: 'Deschide aplicația de control', click: openControl },
-      { label: 'Reîncarcă ecranul panoului', click: () => player ? player.reload() : openPlayer() },
-      { label: `PIN: ${server.pin()}`, enabled: false },
-      ...server.addresses().map((ip) => ({ label: `Din telefon: http://${ip}:${server.PORT}`, enabled: false })),
-      { type: 'separator' },
-      { label: 'Ieșire (oprește panoul)', click: () => { app.exit(0); } },
-    ]));
+    let shown = '';
+    const buildTray = () => {
+      const pin = server.pin();
+      if (pin === shown) return; shown = pin;
+      tray.setToolTip(`Afișare Druțu · PIN ${pin}`);
+      tray.setContextMenu(Menu.buildFromTemplate([
+        { label: 'Deschide aplicația de control', click: openControl },
+        { label: 'Reîncarcă ecranul panoului', click: () => player ? player.reload() : openPlayer() },
+        { label: `PIN / parolă: ${pin}`, enabled: false },
+        ...server.addresses().map((ip) => ({ label: `Din telefon: http://${ip}:${server.PORT}`, enabled: false })),
+        { type: 'separator' },
+        { label: 'Ieșire (oprește panoul)', click: () => { app.exit(0); } },
+      ]));
+    };
+    buildTray(); setInterval(buildTray, 3000);   // se actualizează dacă schimbi parola din aplicație
     tray.on('click', openControl);
   });
   screen.on('display-added', placePlayer);

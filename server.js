@@ -402,6 +402,14 @@ const server = http.createServer(async (req, res) => {
         } catch { return reply(res, 200, { title: '' }); }
       }
 
+      if (p === '/api/pin' && req.method === 'POST') {
+        const b = await readJson(req, 4096);
+        const np = String(b.pin || '').trim();
+        if (np.length < 6 || np.length > 64) return reply(res, 400, { error: 'Parola trebuie să aibă între 6 și 64 de caractere.' });
+        if (!/^[\x21-\x7e]+$/.test(np)) return reply(res, 400, { error: 'Folosește doar litere fără diacritice, cifre și semne (fără spații, fără ă/â/î/ș/ț).' });
+        db.pin = np; save();
+        return reply(res, 200, { ok: true });
+      }
       if (p === '/api/info' && req.method === 'GET') return reply(res, 200, { pin: db.pin, port: PORT, addresses: addresses() });
       // ecrane (doar în aplicația desktop)
       if (p === '/api/displays' && req.method === 'GET') {
