@@ -161,7 +161,7 @@ const kindOf = (ext) => Object.keys(KIND).find((k) => KIND[k].includes(ext));
 
 function serveFile(req, res, file, cache) {
   fs.stat(file, (err, st) => {
-    if (err || !st.isFile()) return reply(res, 404, 'negăsit', 'text/plain');
+    if (err || !st.isFile()) return reply(res, 404, 'Pagina nu există. Verifică adresa (fără punct sau spațiu la final).', 'text/plain; charset=utf-8');
     const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
     const range = req.headers.range;
     const head = { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Cache-Control': cache };
@@ -276,7 +276,7 @@ async function canvaExport(designId, format) {
 // ---------- rute ----------
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
-  const p = url.pathname;
+  const p = url.pathname.replace(/^(\/oauth\/(?:canva|youtube)\/callback)[.\s%20]+$/, '$1');
   try {
     if (p === '/') return redirect(res, '/app.html');
 
