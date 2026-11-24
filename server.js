@@ -325,7 +325,10 @@ const server = http.createServer(async (req, res) => {
       const st = oauthStates.get(url.searchParams.get('state') || '');
       oauthStates.delete(url.searchParams.get('state') || '');
       const code = url.searchParams.get('code');
-      if (!st || !code || Date.now() - st.at > 600000) return reply(res, 400, 'Conectarea a expirat sau a fost refuzată. Încearcă din nou din aplicație.', 'text/plain; charset=utf-8');
+      const why = url.searchParams.get('error_description') || url.searchParams.get('error');
+      if (why) return reply(res, 400, (st ? (st.provider === 'canva' ? 'Canva' : 'Google') : 'Serviciul') + ' a refuzat conectarea: ' + why + '\n\nÎnchide fereastra și încearcă din nou din aplicație.', 'text/plain; charset=utf-8');
+      if (!st) return reply(res, 400, 'Conectarea nu mai e valabilă (pagina a fost reîncărcată sau aplicația a fost repornită). Apasă din nou „Conectează” în aplicație.', 'text/plain; charset=utf-8');
+      if (!code || Date.now() - st.at > 600000) return reply(res, 400, 'Conectarea a expirat (peste 10 minute). Apasă din nou „Conectează” în aplicație.', 'text/plain; charset=utf-8');
       const cfg = db.secrets[st.provider];
       if (st.provider === 'youtube') {
         const r = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

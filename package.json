@@ -1,7 +1,7 @@
 {
   "name": "afisare-drutu",
   "productName": "Afișare Druțu",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Control pentru panoul LED de pe clădire: playlist, programare pe zile, YouTube, Canva, luminozitate.",
   "main": "desktop/main.js",
   "scripts": {
