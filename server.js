@@ -106,6 +106,7 @@ function publicState() {
     integrations: {
       youtube: { configured: !!(s.youtube?.clientId && s.youtube?.clientSecret), connected: !!s.youtube?.refresh, channel: s.youtube?.channel || '' },
       canva: { configured: !!(s.canva?.clientId && s.canva?.clientSecret), connected: !!s.canva?.refresh },
+      ai: { claude: !!s.ai?.anthropicKey, images: !!s.ai?.openaiKey },
     },
     desktop: !!global.panouDesktop,
   };
@@ -197,6 +198,74 @@ async function download(url, ext) {
 const oauthStates = new Map(); // state -> {provider, verifier, redirect, at}
 function originOf(req) { return 'http://' + (req.headers.host || 'localhost:' + PORT); }
 function b64url(buf) { return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+
+
+// ---------- AI: Claude (grafică SVG) + OpenAI (imagini) ----------
+function panelSize() {
+  const a = db.settings.area || {};
+  let w = +a.w || 1920, h = +a.h || 1080;
+  const k = Math.min(1, 1920 / Math.max(w, h)); // păstrăm proporția panoului
+  return { w: Math.round(w * k) || 1920, h: Math.round(h * k) || 1080 };
+}
+function cleanSvg(t) {
+  const m = String(t).match(/<svg[\s\S]*<\/svg>/i);
+  if (!m) return null;
+  return m[0]
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*')/gi, '')
+    .replace(/(href|xlink:href)\s*=\s*("|')\s*(?!#|data:image\/)[^"']*\2/gi, '');
+}
+async function aiDesign(prompt) {
+  const ai = db.secrets.ai || {};
+  if (!ai.anthropicKey) throw new Error('Adaugă cheia Claude în Setări → Inteligență artificială.');
+  const { w, h } = panelSize();
+  const system = `Ești designer pentru un ecran LED publicitar montat pe o clădire, văzut de la distanță (stradă, mașini).
+Creezi UN SINGUR slide, ca imagine SVG completă și independentă.
+Reguli:
+- Răspunde DOAR cu codul SVG, începând cu <svg și terminând cu </svg>. Fără explicații, fără markdown.
+- <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">.
+- Fundalul acoperă tot slide-ul (gradient sau culoare plină, culori vii, contrast mare).
+- Text FOARTE mare și puțin: titlu de maximum 6–8 cuvinte, eventual un subtitlu scurt și un detaliu (dată, preț, oră). Textul principal ocupă o mare parte din înălțime.
+- Nimic important mai aproape de 5% de margini. Niciun text nu iese din slide: împarte singur rândurile cu <tspan> și alege dimensiunea fontului ca să încapă.
+- Font: font-family="Arial, Helvetica, sans-serif", font-weight 700–900 pentru titlu.
+- Scrie în limba cererii (implicit română) cu diacritice corecte (ă, â, î, ș, ț).
+- Decor doar din forme vectoriale simple (cercuri, valuri, linii, iconițe simple desenate cu path). Fără <image>, fără fonturi sau resurse externe, fără <script>, fără <foreignObject>.
+- Nu desena logo-uri sau personaje protejate de drepturi de autor.`;
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': ai.anthropicKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: ai.claudeModel || 'claude-sonnet-5-5', max_tokens: 12000, system, messages: [{ role: 'user', content: prompt }] }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error('Claude: ' + (j.error?.message || r.status));
+  const text = (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
+  const svg = cleanSvg(text);
+  if (!svg) throw new Error('Claude nu a trimis o grafică validă. Încearcă din nou.');
+  const name = Date.now() + '-ai-' + newId() + '.svg';
+  fs.writeFileSync(path.join(UPLOADS, name), svg);
+  return { url: '/uploads/' + name, type: 'image' };
+}
+async function aiImage(prompt) {
+  const ai = db.secrets.ai || {};
+  if (!ai.openaiKey) throw new Error('Adaugă cheia OpenAI în Setări → Inteligență artificială.');
+  const { w, h } = panelSize();
+  const full = prompt + '\n\nImagine pentru un ecran LED publicitar exterior, orientare ' + (w >= h ? 'orizontală' : 'verticală') + ', culori vii, contrast mare, compoziție simplă, lizibilă de la distanță. Dacă apare text, să fie foarte puțin și foarte mare.';
+  const call = (size) => fetch('https://api.openai.com/v1/images/generations', {
+    method: 'POST', headers: { Authorization: 'Bearer ' + ai.openaiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: ai.imageModel || 'gpt-image-2', prompt: full, size, n: 1 }),
+  });
+  const wide = w >= h;
+  let r = await call(wide ? '1536x864' : '864x1536');
+  if (r.status === 400) r = await call(wide ? '1536x1024' : '1024x1536');
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error('OpenAI: ' + (j.error?.message || r.status));
+  const b64 = j.data?.[0]?.b64_json;
+  if (!b64) throw new Error('OpenAI nu a trimis nicio imagine.');
+  const name = Date.now() + '-ai-' + newId() + '.png';
+  fs.writeFileSync(path.join(UPLOADS, name), Buffer.from(b64, 'base64'));
+  return { url: '/uploads/' + name, type: 'image' };
+}
 
 // ---------- YouTube ----------
 const YT = 'https://www.googleapis.com/youtube/v3/';
@@ -422,6 +491,24 @@ const server = http.createServer(async (req, res) => {
         return reply(res, 200, { ok: true });
       }
 
+      if (p === '/api/ai-keys' && req.method === 'PUT') {
+        const b = await readJson(req, 8192);
+        const cur = db.secrets.ai || {};
+        const nx = { ...cur };
+        for (const k of ['anthropicKey', 'openaiKey', 'claudeModel', 'imageModel']) {
+          if (b[k] === null) delete nx[k];
+          else if (typeof b[k] === 'string' && b[k].trim()) nx[k] = b[k].trim().slice(0, 300);
+        }
+        db.secrets.ai = nx; save(); broadcast();
+        return reply(res, 200, { ok: true });
+      }
+      if (p === '/api/ai/generate' && req.method === 'POST') {
+        const b = await readJson(req, 16384);
+        const prompt = str(b.prompt, 4000).trim();
+        if (!prompt) return reply(res, 400, { error: 'Scrie ce vrei să apară pe panou.' });
+        try { return reply(res, 200, b.kind === 'photo' ? await aiImage(prompt) : await aiDesign(prompt)); }
+        catch (e) { return reply(res, 400, { error: e.message }); }
+      }
       // conturi
       if (p === '/api/accounts' && req.method === 'PUT') {
         const b = await readJson(req, 8192);

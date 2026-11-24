@@ -209,6 +209,7 @@ label.l{display:block;font-size:13px;color:var(--mut);margin:0 0 6px}
 <script>
 const P = window.Panou;
 const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const uid = () => Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -475,16 +476,56 @@ $('#layer').addEventListener('click', e => { if (e.target.closest('[data-close]'
 function openAdd() {
   openView('add', `
     <div class="row"><h2 class="h2 grow" style="font-size:20px;font-weight:800">Ce pui pe panou?</h2><button class="iconbtn" data-close aria-label="Închide">×</button></div>
+    <button class="opt press" id="aAI" style="background:linear-gradient(135deg,rgba(217,119,87,.18),rgba(10,132,255,.18))"><span class="ic" style="background:linear-gradient(135deg,#d97757,#0a84ff);color:#fff"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg></span><span class="grow"><b>Creează cu AI</b><span class="d">Descrii ce vrei, iar AI-ul face slide-ul</span></span></button>
     <button class="opt press" id="aFile"><span class="ic" style="background:rgba(10,132,255,.15);color:#67e8f9"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg></span><span class="grow"><b>Poze, video, PDF</b><span class="d">Din galerie, din Fișiere sau de pe PC — poți alege mai multe</span></span></button>
     <button class="opt press" id="aCanva" style="background:linear-gradient(135deg,rgba(0,196,204,.2),rgba(125,42,232,.2));border-color:rgba(10,132,255,.35)"><span class="ic" style="background:linear-gradient(135deg,#00c4cc,#7d2ae8);color:#fff;font-weight:800;font-size:20px">C</span><span class="grow"><b>Din Canva</b><span class="d">Fiecare pagină devine un slide</span></span></button>
     <button class="opt press" id="aYT"><span class="ic" style="background:rgba(239,68,68,.16);color:#ff453a"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="4"/><path d="m10 9 5 3-5 3z"/></svg></span><span class="grow"><b>Din YouTube</b><span class="d">Clipurile și playlisturile contului tău</span></span></button>
     <button class="opt press" id="aText"><span class="ic" style="background:rgba(248,113,113,.16);color:#ff8a80"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg></span><span class="grow"><b>Anunț rapid</b><span class="d">Vânzare, ofertă, mesaj — scrii textul și gata</span></span></button>
     <form id="aLinkF" class="row" style="gap:8px"><input id="aLink" type="url" placeholder="sau lipește un link (YouTube, imagine, pagină)" autocomplete="off"><button class="btn pri" style="flex:none">Adaugă</button></form>`, true, () => {
     $('#aFile').onclick = () => $('#fileIn').click();
-    $('#aCanva').onclick = openCanva; $('#aYT').onclick = openYouTube;
+    $('#aCanva').onclick = openCanva; $('#aYT').onclick = openYouTube; $('#aAI').onclick = openAI;
     $('#aText').onclick = () => openEditor(newItem({ type: 'text', source: 'text', text: 'REDUCERI −30%', sub: 'la toată colecția', bg: 'g0', title: '' }), true);
     $('#aLinkF').onsubmit = e => { e.preventDefault(); const v = $('#aLink').value.trim(); if (v) { addLink(v); closeView(); } };
   });
+}
+// ---------- CREEAZĂ CU AI ----------
+const AI_IDEI = ['Reduceri de weekend −30% la toată colecția', 'Mesaj de încurajare: „Nu ești singur”, ton cald', 'Program de sărbători: 24–26 decembrie închis', 'Concert de colinde duminică la ora 18:00, intrarea liberă', 'Bun venit! Vă așteptăm cu drag'];
+function openAI() {
+  let kind = 'design', last = null, busy = false;
+  const draw = () => {
+    const A = S.integrations.ai || {}, ok = kind === 'photo' ? A.images : A.claude;
+    openView('ai', `
+      <div class="row"><h2 class="h2 grow" style="font-size:20px;font-weight:800">Creează cu AI</h2><button class="iconbtn" data-close aria-label="Închide">×</button></div>
+      <div class="seg" style="grid-template-columns:1fr 1fr" role="tablist">
+        <button class="press ${kind === 'design' ? 'on' : ''}" data-k="design">Grafică cu text · Claude</button>
+        <button class="press ${kind === 'photo' ? 'on' : ''}" data-k="photo">Imagine · OpenAI</button>
+      </div>
+      <div class="small">${kind === 'design' ? 'Pentru anunțuri, oferte, mesaje: text mare, culori, forme. Textul iese corect, cu diacritice.' : 'Pentru imagini de tip foto sau ilustrație. Textul din imagine poate ieși imperfect — pentru anunțuri cu text folosește Grafică.'}</div>
+      ${ok ? `
+      <textarea id="aiP" rows="4" placeholder="Ex.: Reduceri de Black Friday −40% la încălțăminte, vineri și sâmbătă, culori negru și auriu" style="min-height:110px">${esc(last?.prompt || '')}</textarea>
+      <div class="row" style="flex-wrap:wrap;gap:6px">${AI_IDEI.map(t => `<button class="chip press" data-idea="${esc(t)}" style="min-height:32px;padding:0 10px;font-size:13px">${esc(t.length > 34 ? t.slice(0, 32) + '…' : t)}</button>`).join('')}</div>
+      <button class="btn pri press" id="aiGo" ${busy ? 'disabled' : ''}>${busy ? 'Se creează… (10–60 s)' : last?.url ? 'Încearcă din nou' : 'Creează'}</button>
+      ${last?.url && !busy ? `<div class="thumb" style="width:100%;aspect-ratio:16/9;background:#000 url('${esc(last.url)}') center/contain no-repeat;border-radius:12px"></div>
+      <div class="row" style="gap:8px"><button class="btn pri press grow" id="aiAdd">Adaugă în listă</button><button class="btn press grow" id="aiNow">Pune acum pe panou</button></div>` : ''}`
+      : `<div class="glass card" style="padding:16px"><b style="color:#fff">Lipsește cheia ${kind === 'photo' ? 'OpenAI' : 'Claude'}</b><div class="mut" style="margin-top:6px">O pui o singură dată în <b>Setări → Inteligență artificială</b>.</div><button class="btn pri press" id="aiSet" style="margin-top:10px;width:100%">Deschide Setări</button></div>`}`, true, () => {
+      $$('[data-k]').forEach(b => b.onclick = () => { kind = b.dataset.k; draw(); });
+      $$('[data-idea]').forEach(b => b.onclick = () => { $('#aiP').value = b.dataset.idea; $('#aiP').focus(); });
+      const set = $('#aiSet'); if (set) set.onclick = () => { closeView(); openSettings(); };
+      const go = $('#aiGo');
+      if (go) go.onclick = async () => {
+        const prompt = $('#aiP').value.trim();
+        if (!prompt) return toast('Scrie ce vrei să apară pe panou');
+        busy = true; last = { ...(last || {}), prompt }; draw();
+        try { const r = await api('POST', '/api/ai/generate', { prompt, kind }); last = { prompt, url: r.url }; }
+        catch (e) { toast(e.message); }
+        busy = false; if (view?.name === 'ai') draw();
+      };
+      const mk = () => newItem({ type: 'image', url: last.url, title: last.prompt.slice(0, 60), source: 'upload' });
+      const add = $('#aiAdd'); if (add) add.onclick = () => { addItems([mk()]); closeView(); };
+      const now = $('#aiNow'); if (now) now.onclick = () => { const it = mk(); addItems([it]); playNow(it); closeView(); };
+    });
+  };
+  draw();
 }
 function addLink(v) {
   let p;
@@ -823,6 +864,14 @@ function openSettings() {
           : '<div class="small">Conectarea se face o singură dată de pe PC-ul panoului (deschide aplicația acolo sau prin AnyDesk).</div>') : ''}
         <div class="small">Unde găsești Client ID / Secret: vezi „GHID-CONTURI.md” din folderul aplicației.</div>
       </div>
+      <div class="glass card"><b style="color:#fff">Inteligență artificială</b>
+        <div class="row"><span class="grow"><b style="color:#fff">Claude</b> <span class="small">· grafică cu text</span><br><span class="small">${S.integrations.ai?.claude ? 'Cheie salvată' : 'Necompletat'}</span></span>${S.integrations.ai?.claude ? '<button class="btn danger press" data-aidel="anthropicKey">Șterge</button>' : ''}</div>
+        ${S.integrations.ai?.claude ? '' : '<input id="aiK1" type="password" placeholder="Cheie Claude API (sk-ant-…)" autocomplete="off">'}
+        <div class="row"><span class="grow"><b style="color:#fff">OpenAI</b> <span class="small">· imagini (opțional)</span><br><span class="small">${S.integrations.ai?.images ? 'Cheie salvată' : 'Necompletat'}</span></span>${S.integrations.ai?.images ? '<button class="btn danger press" data-aidel="openaiKey">Șterge</button>' : ''}</div>
+        ${S.integrations.ai?.images ? '' : '<input id="aiK2" type="password" placeholder="Cheie OpenAI API (sk-…)" autocomplete="off">'}
+        ${S.integrations.ai?.claude && S.integrations.ai?.images ? '' : '<button class="btn pri press" id="aiKSave">Salvează cheile</button>'}
+        <div class="small">Cheia Claude: platform.claude.com → API Keys. Cheia OpenAI: platform.openai.com → API keys. Se plătește doar ce folosești (câțiva cenți pe slide).</div>
+      </div>
       <div class="glass card"><b style="color:#fff">Parola de acces</b><div class="mut">Dacă deschizi aplicația de oriunde (prin internet), pune o parolă lungă în locul PIN-ului de 6 cifre. Minim 6 caractere, recomandat 12+, fără diacritice și fără spații.</div>
         <input id="sPin1" type="password" placeholder="Parola nouă" autocomplete="new-password" autocapitalize="off" maxlength="64">
         <input id="sPin2" type="password" placeholder="Repetă parola" autocomplete="new-password" autocapitalize="off" maxlength="64">
@@ -843,6 +892,13 @@ function openSettings() {
     });
     $('#stBody').querySelectorAll('[data-disc]').forEach(b => b.onclick = () => api('PUT', '/api/accounts', { [b.dataset.disc]: { disconnect: true } }).then(() => toast('Deconectat')));
     $('#sOut').onclick = () => { closeView(); logout(); };
+    const aks = $('#aiKSave');
+    if (aks) aks.onclick = async () => {
+      const b = { anthropicKey: $('#aiK1')?.value.trim() || '', openaiKey: $('#aiK2')?.value.trim() || '' };
+      if (!b.anthropicKey && !b.openaiKey) return toast('Lipește cel puțin o cheie');
+      try { await api('PUT', '/api/ai-keys', b); toast('Cheile au fost salvate'); } catch (e) { toast(e.message); }
+    };
+    $$('[data-aidel]').forEach(x => x.onclick = () => api('PUT', '/api/ai-keys', { [x.dataset.aidel]: null }).then(() => toast('Cheie ștearsă')).catch(e => toast(e.message)));
     $('#sPinSave').onclick = async () => {
       const a = $('#sPin1').value.trim(), b = $('#sPin2').value.trim();
       if (a.length < 6) return toast('Parola trebuie să aibă minim 6 caractere');

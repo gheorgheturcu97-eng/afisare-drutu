@@ -31,3 +31,28 @@ Dacă pentru contul tău Canva cere aprobarea integrării înainte să o poți f
 ### Ce face legătura cu Canva
 - **＋ Adaugă → Din Canva:** alegi designurile. Fiecare pagină devine un slide; dacă alegi „Video”, un design animat vine ca un singur clip.
 - **Slide din Canva → Editează în Canva:** se deschide editorul Canva. Când te întorci în aplicație, slide-urile se actualizează singure.
+
+---
+
+## Inteligență artificială („Creează cu AI”)
+
+În aplicație: **＋ Adaugă → Creează cu AI**. Scrii ce vrei („Reduceri de weekend −30%, culori roșu și alb”), iar AI-ul face slide-ul.
+
+Sunt două variante, fiecare cu cheia ei. Le pui o singură dată în **Setări → Inteligență artificială**:
+
+### Claude — grafică cu text (recomandat pentru anunțuri)
+1. Intră pe **platform.claude.com** și fă-ți cont.
+2. **Billing** → adaugă un card și câteva credite (de ex. 5 $ ajung pentru sute de slide-uri).
+3. **API Keys → Create Key**, copiază cheia (începe cu `sk-ant-`).
+4. Lipește-o în aplicație la **Cheie Claude API** → **Salvează cheile**.
+
+Claude face slide-uri din text, culori și forme (fișier SVG). Textul iese corect, cu diacritice. Nu face fotografii.
+
+### OpenAI — imagini (opțional)
+1. Intră pe **platform.openai.com**, fă-ți cont, adaugă credit la **Billing**.
+2. **API keys → Create new secret key**, copiază cheia (începe cu `sk-`).
+3. Lipește-o la **Cheie OpenAI API** → **Salvează cheile**.
+
+Pentru imagini de tip foto sau ilustrație. Textul din imagine poate ieși imperfect, așa că pentru anunțuri cu text folosește varianta Claude.
+
+Cheile stau doar pe PC-ul panoului și nu se trimit nicăieri altundeva.
