@@ -892,10 +892,6 @@ const server = http.createServer(async (req, res) => {
 
     // ---- fișiere ----
     if (req.method === 'GET' || req.method === 'HEAD') {
-      if (p === '/vendor/pdf.min.js' || p === '/vendor/pdf.worker.min.js') {
-        try { return serveFile(req, res, require.resolve('pdfjs-dist/build/' + p.slice(8)), 'public, max-age=86400'); }
-        catch { return reply(res, 404, 'lipsă', 'text/plain'); }
-      }
       if (p.startsWith('/uploads/')) {
         const f = inside(UPLOADS, decodeURIComponent(p.slice('/uploads/'.length)));
         return f ? serveFile(req, res, f, 'public, max-age=86400') : reply(res, 403, 'interzis', 'text/plain');
