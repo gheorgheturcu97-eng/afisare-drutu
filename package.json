@@ -1,20 +1,21 @@
 {
   "name": "afisare-drutu",
   "productName": "Afișare Druțu",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "description": "Control pentru panoul LED de pe clădire: playlist, programare pe zile, YouTube, Canva, luminozitate.",
   "main": "desktop/main.js",
   "scripts": {
     "start": "electron .",
     "server": "node server.js",
-    "dist:win": "electron-builder --win",
-    "dist:mac": "electron-builder --mac"
+    "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never"
   },
   "build": {
     "appId": "ro.drutu.afisare",
     "productName": "Afișare Druțu",
     "files": [
       "server.js",
+      "package.json",
       "public/**",
       "desktop/**",
       "!public/uploads/**"
@@ -34,7 +35,8 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Afișare Druțu"
+      "shortcutName": "Afișare Druțu",
+      "deleteAppDataOnUninstall": false
     },
     "mac": {
       "target": [
@@ -57,7 +59,13 @@
       "category": "public.app-category.business"
     },
     "artifactName": "Afisare-Drutu-${version}-${os}-${arch}.${ext}",
-    "publish": null
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "gheorgheturcu97-eng",
+        "repo": "afisare-drutu"
+      }
+    ]
   },
   "devDependencies": {
     "electron": "^33.0.0",
@@ -70,5 +78,10 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/gheorgheturcu97-eng/afisare-drutu.git"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11",
+    "pdfjs-dist": "^3.11.174",
+    "qrcode": "^1.5.4"
   }
 }

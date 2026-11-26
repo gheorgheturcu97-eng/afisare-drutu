@@ -23,6 +23,9 @@ Ia ultima versiune din **[Releases](../../releases/latest)**:
 xattr -cr "/Applications/Afișare Druțu.app"
 ```
 
+## Noutăți în 1.1
+Vezi [CHANGELOG.md](CHANGELOG.md): securitate, ecran care se repornește singur, acces de oriunde din aplicație (Tailscale), actualizări automate, AI Studio, mod operator.
+
 ## 1. Pe PC-ul panoului (MINIX, Windows)
 
 1. Instalează `Afisare-Drutu-…-win-x64.exe` sau dezarhivează varianta `.zip`, de exemplu în `C:\Afisare Drutu`.
@@ -93,3 +96,13 @@ npm run dist:mac     # .dmg pentru Mac (rulează pe macOS)
 ```
 
 Fișierele de instalare se construiesc automat pe GitHub (Actions) pentru Windows și Mac. Pentru o versiune nouă schimbă doar `version` în `package.json` (ex. `1.0.1`) și urcă modificarea pe `main`. Se creează singur un Release cu fișierele.
+
+## Acces de oriunde (din aplicație)
+**Setări → Acces de oriunde**:
+1. **Instalează Tailscale** (gratuit) → în aplicația Tailscale apasă **Log in**.
+2. **Acces privat (recomandat)**: merge pe telefoanele care au și aplicația Tailscale, cu același cont.
+3. **Link public**: merge din orice browser, fără nimic instalat pe telefon. Cere o parolă de administrator puternică (Setări → Securitate) și confirmare. Prima dată Tailscale îți cere să activezi „Funnel” (aplicația îți deschide linkul).
+4. Scanează **codul QR** cu telefonul, apoi Partajează → Adaugă pe ecranul principal.
+
+## Actualizări
+Pe Windows aplicația se actualizează singură (Setări → Actualizări). Datele rămân; înainte de instalare se salvează o copie în `%APPDATA%\Afișare Druțu\backup`. Pentru a reveni la o versiune mai veche: instalează-o din Releases (datele rămân).

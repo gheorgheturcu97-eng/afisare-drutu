@@ -160,10 +160,13 @@ label.l{display:block;font-size:13px;color:var(--mut);margin:0 0 6px}
   </div>
 
   <button id="bTarget" class="status press"></button>
+  <div id="healthWarn" class="hidden" style="padding:10px 14px;border-radius:12px;background:rgba(255,159,10,.12);color:#ffd60a;font-size:14px"></div>
+  <div id="updBanner" class="hidden" style="padding:10px 14px;border-radius:12px;background:rgba(10,132,255,.14);color:#cfe3ff;font-size:14px;display:flex;gap:10px;align-items:center"></div>
 
   <section class="glass now" aria-label="Acum pe panou">
     <div class="stage"><div id="nowThumb" class="thumb"></div><div class="badge"><i id="nowDot"></i><span id="nowLabel">ACUM</span></div></div>
     <div id="nowTitle" class="meta"></div>
+    <div id="nextLine" class="small" style="padding:0 14px 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
     <div class="ctrls">
       <button class="btn press" id="bPrev" aria-label="Anteriorul">‹ Înapoi</button>
       <button class="btn press" id="bBlack">Ecran negru</button>
@@ -216,15 +219,17 @@ const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const ZI = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 const ZILE = ['Luni', 'Marți', 'Miercuri', 'Joi', 'Vineri', 'Sâmbătă', 'Duminică'];
 
-let PIN = localStorage.getItem('panou.pin') || '';
+let TOKEN = localStorage.getItem('panou.token') || '';
+let ROLE = localStorage.getItem('panou.role') || 'admin';
 let S = null, items = [], saving = 0, undoStack = [];
 let selDay = P.dayIdx(new Date());
+const isAdmin = () => ROLE === 'admin';
 
 // ================= API =================
 async function api(method, url, body, raw) {
-  const r = await fetch(url, { method, headers: raw ? { 'X-Pin': PIN, ...raw.headers } : { 'Content-Type': 'application/json', 'X-Pin': PIN }, body: raw ? raw.body : body ? JSON.stringify(body) : undefined });
+  const r = await fetch(url, { method, headers: raw ? { 'X-Token': TOKEN, ...raw.headers } : { 'Content-Type': 'application/json', 'X-Token': TOKEN }, body: raw ? raw.body : body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({}));
-  if (r.status === 401) { logout(); throw new Error('PIN greșit'); }
+  if (r.status === 401) { logout(true); throw new Error('Sesiunea a expirat — intră din nou'); }
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
 }
@@ -232,27 +237,47 @@ async function login(pin) {
   const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || 'Eroare');
-  PIN = pin; localStorage.setItem('panou.pin', pin);
+  setSession(j.token, j.role);
 }
-function logout() { localStorage.removeItem('panou.pin'); PIN = ''; show('login'); }
-$('#loginForm').onsubmit = async e => { e.preventDefault(); try { await login($('#pinIn').value.trim()); start(); } catch (err) { $('#loginErr').textContent = err.message; } };
+function setSession(t, role) { TOKEN = t; ROLE = role || 'admin'; localStorage.setItem('panou.token', t); localStorage.setItem('panou.role', ROLE); }
+function logout(expired) {
+  if (!expired && TOKEN) fetch('/api/logout', { method: 'POST', headers: { 'X-Token': TOKEN } }).catch(() => {});
+  localStorage.removeItem('panou.token'); localStorage.removeItem('panou.role'); localStorage.removeItem('panou.pin');
+  TOKEN = ''; if (es) { es.close(); es = null; } show('login');
+}
+$('#loginForm').onsubmit = async e => { e.preventDefault(); try { await login($('#pinIn').value.trim()); $('#pinIn').value = ''; start(); } catch (err) { $('#loginErr').textContent = err.message; } };
 function show(v) { $('#login').classList.toggle('hidden', v !== 'login'); $('#home').classList.toggle('hidden', v !== 'home'); $('#fab').classList.toggle('hidden', v !== 'home'); }
 
+let es = null;
 function start() {
   show('home');
-  const es = new EventSource('/api/events');
+  if (es) es.close();
+  es = new EventSource('/api/events?t=' + encodeURIComponent(TOKEN));
   es.addEventListener('state', e => {
     S = JSON.parse(e.data);
     if (!saving) items = S.items;
     renderHome(); refreshOpenView();
   });
-  es.onerror = () => { const b = $('#bTarget'); b.innerHTML = '<span class="grow">Fără legătură cu panoul… se reconectează</span>'; b.style.cssText += ';background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.35);color:#fecaca'; };
+  es.onerror = async () => {
+    const b = $('#bTarget'); b.className = 'status press off'; b.innerHTML = '<span class="dot"></span><span class="grow">Fără legătură cu panoul… se reconectează</span>';
+    try { const r = await fetch('/api/me', { headers: { 'X-Token': TOKEN } }); if (r.status === 401) logout(true); } catch {}
+  };
+  api('GET', '/api/me').then(m => { ROLE = m.role; localStorage.setItem('panou.role', ROLE); document.body.classList.toggle('operator', ROLE !== 'admin'); if (m.initial && m.local) setTimeout(() => toast('Recomandat: pune o parolă proprie în Setări → Securitate'), 1500); }).catch(() => {});
   if (location.hash.startsWith('#conectat-')) { const p = location.hash.slice(10); history.replaceState(null, '', location.pathname); setTimeout(() => { toast((p === 'youtube' ? 'YouTube' : 'Canva') + ' conectat ✓'); p === 'youtube' ? openYouTube() : openCanva(); }, 600); }
 }
+// pornire conectare Canva / YouTube: bilet de o singură folosință (parola nu apare în adresă)
+async function oauthGo(prov) {
+  try { const { k } = await api('POST', '/api/oauth-ticket'); location.href = (prov === 'canva' ? `http://127.0.0.1:${location.port}` : `http://localhost:${location.port}`) + `/oauth/${prov}/start?k=${encodeURIComponent(k)}&back=${location.hostname === '127.0.0.1' ? '127' : 'lh'}`; }
+  catch (e) { toast(e.message); }
+}
 (async () => {
-  const hp = location.hash.match(/^#pin=([^&]+)/); if (hp) { PIN = decodeURIComponent(hp[1]); history.replaceState(null, '', location.pathname); }
+  const ht = location.hash.match(/^#t=([^&]+)/); if (ht) { setSession(decodeURIComponent(ht[1]), 'admin'); history.replaceState(null, '', location.pathname); }
   if (/[?&]app=ios/.test(location.search)) localStorage.setItem('panou.ios', '1');
-  if (PIN) { try { await login(PIN); return start(); } catch {} } show('login'); })();
+  const oldPin = localStorage.getItem('panou.pin');   // versiunile vechi țineau PIN-ul în telefon: îl folosim o dată și îl ștergem
+  if (!TOKEN && oldPin) { try { await login(oldPin); } catch {} localStorage.removeItem('panou.pin'); }
+  if (TOKEN) return start();
+  show('login');
+})();
 
 // ================= salvare + anulare =================
 function snapshot() { return JSON.parse(JSON.stringify(items)); }
@@ -276,7 +301,7 @@ function newItem(p) {
 }
 
 // ================= miniaturi =================
-const SRC = { upload: 'Fișier', canva: 'Canva', youtube: 'YouTube', link: 'Link', text: 'Text' };
+const SRC = { upload: 'Fișier', canva: 'Canva', youtube: 'YouTube', link: 'Link', text: 'Text', ai: 'AI' };
 function thumbHTML(it, w) {
   const bd = `<span class="bd">${esc(it.type === 'pdf' ? 'PDF' : it.type === 'ytlist' ? 'Playlist' : it.type === 'video' && it.source !== 'canva' ? 'Video' : it.type === 'text' ? 'Text' : SRC[it.source] || '')}</span>`;
   const st = `width:${w}`;
@@ -320,6 +345,8 @@ function renderHome() {
   $('#nowThumb').outerHTML = nowIt && !S.black ? thumbHTML(nowIt, '100%').replace('class="thumb"', 'class="thumb" id="nowThumb"') : '<div id="nowThumb" class="thumb" style="width:100%;background:#000"></div>';
   $('#nowLabel').textContent = S.black ? 'ECRAN NEGRU' : !online ? 'OPRIT' : S.live ? (S.live.loop ? 'ÎN BUCLĂ' : 'LIVE') : 'LIVE';
   $('#nowDot').style.background = online && !S.black ? 'var(--red)' : '#6b6f7a';
+  { const list = items.filter(x => P.activeAt(x, new Date())), k = list.findIndex(x => x.id === S.status.nowId), nx = list.length > 1 ? list[(k + 1) % list.length] : null;
+    $('#nextLine').textContent = !S.black && !S.live && nx ? 'Urmează: ' + (nx.title || nx.text || nx.url || '') : ''; }
   $('#nowTitle').textContent = S.black ? 'Nu se afișează nimic' : (nowIt ? (nowIt.title || nowIt.text || nowIt.url) : S.status.now || 'Nimic pe ecran');
   $('#bBlack').textContent = S.black ? 'Pornește' : S.live ? 'Oprește' : 'Ecran negru';
   $('#bBlack').classList.toggle('pri', !!S.black);
@@ -483,48 +510,107 @@ function openAdd() {
     <button class="opt press" id="aText"><span class="ic" style="background:rgba(248,113,113,.16);color:#ff8a80"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg></span><span class="grow"><b>Anunț rapid</b><span class="d">Vânzare, ofertă, mesaj — scrii textul și gata</span></span></button>
     <form id="aLinkF" class="row" style="gap:8px"><input id="aLink" type="url" placeholder="sau lipește un link (YouTube, imagine, pagină)" autocomplete="off"><button class="btn pri" style="flex:none">Adaugă</button></form>`, true, () => {
     $('#aFile').onclick = () => $('#fileIn').click();
-    $('#aCanva').onclick = openCanva; $('#aYT').onclick = openYouTube; $('#aAI').onclick = openAI;
+    $('#aCanva').onclick = openCanva; $('#aYT').onclick = openYouTube; $('#aAI').onclick = () => openStudio({});
     $('#aText').onclick = () => openEditor(newItem({ type: 'text', source: 'text', text: 'REDUCERI −30%', sub: 'la toată colecția', bg: 'g0', title: '' }), true);
     $('#aLinkF').onsubmit = e => { e.preventDefault(); const v = $('#aLink').value.trim(); if (v) { addLink(v); closeView(); } };
   });
 }
 // ---------- CREEAZĂ CU AI ----------
 const AI_IDEI = ['Reduceri de weekend −30% la toată colecția', 'Mesaj de încurajare: „Nu ești singur”, ton cald', 'Program de sărbători: 24–26 decembrie închis', 'Concert de colinde duminică la ora 18:00, intrarea liberă', 'Bun venit! Vă așteptăm cu drag'];
-function openAI() {
-  let kind = 'design', last = null, busy = false;
+// ---------- AI STUDIO: generează, modifică prin instrucțiuni, editează codul, istoric ----------
+async function openStudio({ item }) {
+  const st = { svg: '', versions: [], idx: -1, designId: item?.design || '', title: item?.title || '', item: item || null, busy: false, code: false, kind: 'design', photo: null };
+  if (item?.url) {
+    try { st.svg = await (await fetch(item.url)).text(); } catch {}
+    if (st.designId) try { const d = await api('GET', '/api/ai/designs/' + st.designId); st.versions = d.versions.map(v => ({ url: v.url, prompt: v.prompt, at: v.at, saved: true })); } catch {}
+    if (!st.versions.length && st.svg) st.versions = [{ svg: st.svg, prompt: 'Versiunea din listă', at: Date.now(), saved: true, url: item.url }];
+    st.idx = st.versions.length - 1;
+  }
+  const A = () => S.integrations.ai || {};
+  const dataUrl = svg => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  const push = (svg, prompt) => { st.versions = st.versions.slice(0, st.idx + 1); st.versions.push({ svg, prompt, at: Date.now() }); st.idx = st.versions.length - 1; st.svg = svg; };
   const draw = () => {
-    const A = S.integrations.ai || {}, ok = kind === 'photo' ? A.images : A.claude;
-    openView('ai', `
-      <div class="row"><h2 class="h2 grow" style="font-size:20px;font-weight:800">Creează cu AI</h2><button class="iconbtn" data-close aria-label="Închide">×</button></div>
-      <div class="seg" style="grid-template-columns:1fr 1fr" role="tablist">
-        <button class="press ${kind === 'design' ? 'on' : ''}" data-k="design">Grafică cu text · Claude</button>
-        <button class="press ${kind === 'photo' ? 'on' : ''}" data-k="photo">Imagine · OpenAI</button>
+    const ok = st.kind === 'photo' ? A().images : A().claude, hasSvg = !!st.svg;
+    openView('studio', `
+      <div class="row"><button class="back" data-close>‹ Înapoi</button><span class="grow"></span></div>
+      <div class="h1" style="font-size:24px">Creează cu AI</div>
+      ${st.item ? '' : `<div class="seg" style="grid-template-columns:1fr 1fr" role="tablist">
+        <button class="press ${st.kind === 'design' ? 'on' : ''}" data-k="design">Grafică cu text · Claude</button>
+        <button class="press ${st.kind === 'photo' ? 'on' : ''}" data-k="photo">Imagine · OpenAI</button></div>`}
+      ${!ok ? `<div class="glass card"><b style="color:#fff">Lipsește cheia ${st.kind === 'photo' ? 'OpenAI' : 'Claude'}</b><div class="mut">${isAdmin() ? 'O pui o singură dată în <b>Setări → Inteligență artificială</b>.' : 'Cere administratorului să adauge cheia.'}</div>${isAdmin() ? '<button class="btn pri press" id="stSet">Deschide Setări</button>' : ''}</div>` : st.kind === 'photo' ? photoUI() : `
+      <div class="glass card" style="padding:0;overflow:hidden"><div id="stPrev" style="aspect-ratio:16/9;background:#000 ${hasSvg ? `url('${dataUrl(st.svg).replace(/'/g, '%27')}') center/contain no-repeat` : ''};display:flex;align-items:center;justify-content:center;color:var(--mut)">${hasSvg ? '' : (st.busy ? 'Se creează… (10–60 s)' : 'Previzualizarea apare aici')}</div></div>
+      <textarea id="stP" rows="3" placeholder="${hasSvg ? 'Ce schimb? Ex.: fă titlul mai mare, fundal albastru închis, adaugă ora 18:00' : 'Ex.: Concert de colinde duminică la 18:00, intrarea liberă, culori calde'}" style="min-height:84px"></textarea>
+      ${hasSvg ? '' : `<div class="row" style="flex-wrap:wrap;gap:6px">${AI_IDEI.map(t => `<button class="chip press" data-idea="${esc(t)}" style="min-height:32px;padding:0 10px;font-size:13px">${esc(t.length > 34 ? t.slice(0, 32) + '…' : t)}</button>`).join('')}</div>`}
+      <div class="row" style="gap:8px">
+        ${hasSvg ? `<button class="btn pri press grow" id="stMod" ${st.busy ? 'disabled' : ''}>${st.busy ? 'Se lucrează…' : '✦ Modifică'}</button><button class="btn press grow" id="stNew" ${st.busy ? 'disabled' : ''}>De la zero</button>`
+                 : `<button class="btn pri press grow" id="stNew" ${st.busy ? 'disabled' : ''}>${st.busy ? 'Se creează…' : '✦ Creează'}</button>`}
       </div>
-      <div class="small">${kind === 'design' ? 'Pentru anunțuri, oferte, mesaje: text mare, culori, forme. Textul iese corect, cu diacritice.' : 'Pentru imagini de tip foto sau ilustrație. Textul din imagine poate ieși imperfect — pentru anunțuri cu text folosește Grafică.'}</div>
-      ${ok ? `
-      <textarea id="aiP" rows="4" placeholder="Ex.: Reduceri de Black Friday −40% la încălțăminte, vineri și sâmbătă, culori negru și auriu" style="min-height:110px">${esc(last?.prompt || '')}</textarea>
-      <div class="row" style="flex-wrap:wrap;gap:6px">${AI_IDEI.map(t => `<button class="chip press" data-idea="${esc(t)}" style="min-height:32px;padding:0 10px;font-size:13px">${esc(t.length > 34 ? t.slice(0, 32) + '…' : t)}</button>`).join('')}</div>
-      <button class="btn pri press" id="aiGo" ${busy ? 'disabled' : ''}>${busy ? 'Se creează… (10–60 s)' : last?.url ? 'Încearcă din nou' : 'Creează'}</button>
-      ${last?.url && !busy ? `<div class="thumb" style="width:100%;aspect-ratio:16/9;background:#000 url('${esc(last.url)}') center/contain no-repeat;border-radius:12px"></div>
-      <div class="row" style="gap:8px"><button class="btn pri press grow" id="aiAdd">Adaugă în listă</button><button class="btn press grow" id="aiNow">Pune acum pe panou</button></div>` : ''}`
-      : `<div class="glass card" style="padding:16px"><b style="color:#fff">Lipsește cheia ${kind === 'photo' ? 'OpenAI' : 'Claude'}</b><div class="mut" style="margin-top:6px">O pui o singură dată în <b>Setări → Inteligență artificială</b>.</div><button class="btn pri press" id="aiSet" style="margin-top:10px;width:100%">Deschide Setări</button></div>`}`, true, () => {
-      $$('[data-k]').forEach(b => b.onclick = () => { kind = b.dataset.k; draw(); });
-      $$('[data-idea]').forEach(b => b.onclick = () => { $('#aiP').value = b.dataset.idea; $('#aiP').focus(); });
-      const set = $('#aiSet'); if (set) set.onclick = () => { closeView(); openSettings(); };
-      const go = $('#aiGo');
-      if (go) go.onclick = async () => {
-        const prompt = $('#aiP').value.trim();
-        if (!prompt) return toast('Scrie ce vrei să apară pe panou');
-        busy = true; last = { ...(last || {}), prompt }; draw();
-        try { const r = await api('POST', '/api/ai/generate', { prompt, kind }); last = { prompt, url: r.url }; }
-        catch (e) { toast(e.message); }
-        busy = false; if (view?.name === 'ai') draw();
-      };
-      const mk = () => newItem({ type: 'image', url: last.url, title: last.prompt.slice(0, 60), source: 'upload' });
-      const add = $('#aiAdd'); if (add) add.onclick = () => { addItems([mk()]); closeView(); };
-      const now = $('#aiNow'); if (now) now.onclick = () => { const it = mk(); addItems([it]); playNow(it); closeView(); };
-    });
+      ${st.versions.length ? `<div class="sect">Versiuni</div><div class="row" style="gap:6px;overflow-x:auto;padding-bottom:4px">${st.versions.map((v, i) => `<button class="chip press ${i === st.idx ? 'on' : ''}" data-v="${i}" title="${esc(v.prompt)}" style="min-height:34px;padding:0 12px;flex:none">v${i + 1}${v.saved ? ' ✓' : ''}</button>`).join('')}</div>` : ''}
+      ${hasSvg ? `<button class="btn press" id="stCode">${st.code ? 'Ascunde codul SVG' : 'Editează codul SVG'}</button>
+        ${st.code ? `<textarea id="stSrc" spellcheck="false" style="min-height:220px;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;white-space:pre">${esc(st.svg)}</textarea><div class="row" style="gap:8px"><button class="btn press grow" id="stApply">Aplică codul</button></div><div class="small">Codul e verificat la salvare: scripturile, linkurile externe și elementele nepermise sunt eliminate.</div>` : ''}
+        <input id="stTitle" type="text" placeholder="Nume (apare în listă)" value="${esc(st.title)}">
+        <div class="row" style="gap:8px">
+          ${st.item ? `<button class="btn pri press grow" id="stReplace">Salvează în slide-ul din listă</button>` : `<button class="btn pri press grow" id="stAdd">Adaugă în playlist</button><button class="btn press grow" id="stLib">Salvează în bibliotecă</button>`}
+        </div>
+        <button class="btn press" id="stNow">▶ Pune acum pe panou</button>` : ''}`}
+    `, false, bind);
   };
+  const photoUI = () => `
+      <textarea id="stP" rows="3" placeholder="Ex.: o cafenea primitoare dimineața, lumină caldă" style="min-height:84px"></textarea>
+      <button class="btn pri press" id="stPhoto" ${st.busy ? 'disabled' : ''}>${st.busy ? 'Se creează… (10–60 s)' : 'Creează imaginea'}</button>
+      ${st.photo ? `<div class="thumb" style="width:100%;aspect-ratio:16/9;background:#000 url('${esc(st.photo.url)}') center/contain no-repeat;border-radius:12px"></div>
+      <div class="row" style="gap:8px"><button class="btn pri press grow" id="phAdd">Adaugă în listă</button><button class="btn press grow" id="phNow">Pune acum pe panou</button></div>` : ''}
+      <div class="small">Textul din imagini poate ieși imperfect — pentru anunțuri cu text folosește „Grafică cu text”.</div>`;
+  const run = async (prompt, base) => {
+    st.busy = true; draw();
+    try { const r = await api('POST', '/api/ai/design', { prompt, base }); push(r.svg, prompt); st.title = st.title || prompt.slice(0, 60); }
+    catch (e) { toast(e.message); }
+    st.busy = false; if (view?.name === 'studio') draw();
+  };
+  const persist = async () => {
+    const v = st.versions[st.idx];
+    if (v && v.saved && v.url && !v.svg) return v.url;
+    const r = await api('POST', '/api/ai/save', { svg: st.svg, designId: st.designId, prompt: v?.prompt || '', title: $('#stTitle')?.value || st.title });
+    st.designId = r.designId; if (v) { v.saved = true; v.url = r.url; }
+    return r.url;
+  };
+  const mkItem = (url, enabled) => newItem({ type: 'image', url, title: ($('#stTitle')?.value || st.title || 'Slide AI').slice(0, 120), source: 'ai', design: st.designId, enabled });
+  function bind() {
+    $$('[data-k]').forEach(b => b.onclick = () => { st.kind = b.dataset.k; draw(); });
+    $$('[data-idea]').forEach(b => b.onclick = () => { $('#stP').value = b.dataset.idea; $('#stP').focus(); });
+    const on = (id, fn) => { const b = $('#' + id); if (b) b.onclick = fn; };
+    on('stSet', () => { closeView(); openSettings(); });
+    on('stNew', () => { const p = $('#stP').value.trim(); if (!p) return toast('Scrie ce vrei să apară pe panou'); run(p, ''); });
+    on('stMod', () => { const p = $('#stP').value.trim(); if (!p) return toast('Scrie ce vrei să schimb'); run(p, st.svg); });
+    $$('[data-v]').forEach(b => b.onclick = async () => {
+      st.idx = +b.dataset.v; const v = st.versions[st.idx];
+      if (!v.svg && v.url) try { v.svg = await (await fetch(v.url)).text(); } catch {}
+      st.svg = v.svg || st.svg; draw();
+    });
+    on('stCode', () => { st.title = $('#stTitle')?.value || st.title; st.code = !st.code; draw(); });
+    let pv; const src = $('#stSrc');
+    if (src) src.oninput = () => { clearTimeout(pv); pv = setTimeout(() => { const box = $('#stPrev'); if (box) box.style.backgroundImage = `url('${dataUrl(src.value).replace(/'/g, '%27')}')`; }, 400); };
+    on('stApply', async () => {
+      try { const r = await api('POST', '/api/ai/check', { svg: $('#stSrc').value }); push(r.svg, 'Editare manuală a codului'); st.title = $('#stTitle')?.value || st.title; if (r.changed) toast('Am eliminat elemente nepermise din cod'); draw(); }
+      catch (e) { toast(e.message); }
+    });
+    on('stAdd', async () => { try { const it = mkItem(await persist(), true); addItems([it]); closeView(); } catch (e) { toast(e.message); } });
+    on('stLib', async () => { try { const it = mkItem(await persist(), false); addItems([it], 'Salvat în bibliotecă'); closeView(); } catch (e) { toast(e.message); } });
+    on('stReplace', async () => {
+      try { const url = await persist(); const title = ($('#stTitle')?.value || st.title).slice(0, 120);
+        commit(items.map(x => x.id === st.item.id ? { ...x, url, design: st.designId, source: 'ai', title: title || x.title } : x), 'Slide actualizat'); closeView(); }
+      catch (e) { toast(e.message); }
+    });
+    on('stNow', async () => { try { const url = await persist(); playNow(mkItem(url, true)); } catch (e) { toast(e.message); } });
+    on('stPhoto', async () => {
+      const p = $('#stP').value.trim(); if (!p) return toast('Descrie imaginea');
+      st.busy = true; draw();
+      try { const r = await api('POST', '/api/ai/generate', { prompt: p, kind: 'photo' }); st.photo = { url: r.url, prompt: p }; } catch (e) { toast(e.message); }
+      st.busy = false; if (view?.name === 'studio') draw();
+    });
+    on('phAdd', () => { addItems([newItem({ type: 'image', url: st.photo.url, title: st.photo.prompt.slice(0, 60), source: 'ai' })]); closeView(); });
+    on('phNow', () => { const it = newItem({ type: 'image', url: st.photo.url, title: st.photo.prompt.slice(0, 60), source: 'ai' }); addItems([it]); playNow(it); closeView(); });
+  }
   draw();
 }
 function addLink(v) {
@@ -564,7 +650,7 @@ addEventListener('dragleave', e => { if (e.dataTransfer?.types.includes('Files')
 addEventListener('dragover', e => { if (e.dataTransfer?.types.includes('Files')) e.preventDefault(); });
 addEventListener('drop', e => { if (!e.dataTransfer?.files.length) return; e.preventDefault(); dd = 0; $('#drop').classList.add('hidden'); uploadFiles([...e.dataTransfer.files]); });
 document.addEventListener('paste', e => {
-  if (e.target.closest('input,textarea') || !PIN) return;
+  if (e.target.closest('input,textarea') || !TOKEN) return;
   const files = [...(e.clipboardData?.files || [])];
   if (files.length) { e.preventDefault(); return uploadFiles(files); }
   const t = e.clipboardData?.getData('text/plain')?.trim(); if (t) { e.preventDefault(); addLink(t); }
@@ -610,6 +696,7 @@ function openEditor(it, isNew) {
         <div class="small">Bun pentru oferte: după data asta dispare automat de pe panou. Lasă gol = fără sfârșit.</div>
       </div>
       <div class="row" style="gap:8px">
+        ${/\.svg($|\?)/i.test(d.url || '') ? '<button class="btn press" id="eAI" style="flex:1.4;background:linear-gradient(135deg,rgba(217,119,87,.35),rgba(10,132,255,.35))">✦ Editează cu AI</button>' : ''}
         <button class="btn red press" id="ePlay" style="flex:1">▶ Acum</button>
         <button class="btn press" id="eDup" style="flex:1">Duplică</button>
         <button class="btn danger press" id="eDel" style="flex:1">Șterge</button>
@@ -639,6 +726,7 @@ function openEditor(it, isNew) {
     $('#eDup').onclick = () => { read(); saveEd(); duplicate(d); closeView(); };
     $('#eDel').onclick = () => { if (isNew) return closeView(); del(d); };
     $('#eCanva') && ($('#eCanva').onclick = () => editInCanva(d));
+    $('#eAI') && ($('#eAI').onclick = () => { read(); saveEd(); openStudio({ item: d }); });
   }
   function saveEd() {
     read();
@@ -680,7 +768,7 @@ document.addEventListener('visibilitychange', async () => {
 function connectBox(prov) {
   const s = S.integrations[prov], name = prov === 'youtube' ? 'YouTube' : 'Canva';
   if (!s.configured) return `<div class="glass card"><b style="color:#fff">Conectează ${name}</b><div class="mut">Prima dată trebuie completate datele de acces ${name} (Client ID și Secret) în <b>Setări → Conturi</b>. Pașii sunt în ghidul din aplicație.</div><button class="btn pri press" id="goAcc">Deschide Setări → Conturi</button></div>`;
-  return `<div class="glass card"><b style="color:#fff">Conectează contul ${name}</b><div class="mut">Se face o singură dată, <b>de pe PC-ul panoului</b> (adresa localhost), ca să accepte ${name} conectarea.</div>${location.hostname === 'localhost' || location.hostname === '127.0.0.1' ? `<a class="btn pri press" style="display:flex;align-items:center;justify-content:center;text-decoration:none" href="/oauth/${prov}/start?pin=${encodeURIComponent(PIN)}">Conectează ${name}</a>` : `<div class="small">Deschide aplicația pe PC-ul panoului (sau prin AnyDesk) și apasă acolo „Conectează”.</div>`}</div>`;
+  return `<div class="glass card"><b style="color:#fff">Conectează contul ${name}</b><div class="mut">Se face o singură dată, <b>de pe PC-ul panoului</b> (adresa localhost), ca să accepte ${name} conectarea.</div>${location.hostname === 'localhost' || location.hostname === '127.0.0.1' ? `<button class="btn pri press" onclick="oauthGo('${prov}')">Conectează ${name}</button>` : `<div class="small">Deschide aplicația pe PC-ul panoului (sau prin AnyDesk) și apasă acolo „Conectează”.</div>`}</div>`;
 }
 function openCanva() {
   let designs = [], sel = new Set(), q = '', format = 'png', loading = false, cont = '';
@@ -844,7 +932,7 @@ function openSettings() {
         <textarea id="sTk" rows="2" placeholder="Un anunț pe rând — lasă gol ca s-o ascunzi">${esc(st.ticker)}</textarea>
         <div class="row"><span class="grow" style="font-size:14px">Ceas pe panou</span><button class="sw ${st.showClock ? 'on' : ''}" id="sClk" role="switch" aria-label="Ceas"></button></div>
       </div>
-      <div class="glass card">
+      <div class="glass card adm">
         <b style="color:#fff">Zona panoului LED (pixeli)</b>
         <div class="small">Rezoluția panoului din NovaLCT / ViPlex (TB60 ia colțul stânga-sus). 0 = tot ecranul.</div>
         <div class="grid2" style="grid-template-columns:repeat(4,minmax(0,1fr));gap:8px">
@@ -852,7 +940,7 @@ function openSettings() {
         </div>
         <button class="btn press" id="sArea">Aplică zona</button>
       </div>
-      <div class="glass card" id="acc">
+      <div class="glass card adm" id="acc">
         <b style="color:#fff">Conturi</b>
         <div class="row"><span class="grow"><b style="color:#fff">YouTube</b><br><span class="small">${I.youtube.connected ? 'Conectat: ' + esc(I.youtube.channel || 'cont') : I.youtube.configured ? 'Date completate — apasă Conectează pe PC-ul panoului' : 'Necompletat'}</span></span>${I.youtube.connected ? '<button class="btn danger press" data-disc="youtube">Deconectează</button>' : ''}</div>
         ${I.youtube.connected ? '' : `<input id="yId" type="text" placeholder="YouTube · Client ID" autocomplete="off"><input id="ySec" type="password" placeholder="YouTube · Client Secret" autocomplete="off">`}
@@ -860,11 +948,11 @@ function openSettings() {
         ${I.canva.connected ? '' : `<input id="cId" type="text" placeholder="Canva · Client ID" autocomplete="off"><input id="cSec" type="password" placeholder="Canva · Client Secret" autocomplete="off">`}
         ${I.youtube.connected && I.canva.connected ? '' : `<button class="btn pri press" id="sAcc">Salvează datele</button>`}
         ${(I.youtube.configured && !I.youtube.connected) || (I.canva.configured && !I.canva.connected) ? (location.hostname === 'localhost' || location.hostname === '127.0.0.1'
-          ? `<div class="row" style="gap:8px">${I.youtube.configured && !I.youtube.connected ? `<a class="btn red press" style="flex:1;display:flex;align-items:center;justify-content:center;text-decoration:none" href="/oauth/youtube/start?pin=${encodeURIComponent(PIN)}">Conectează YouTube</a>` : ''}${I.canva.configured && !I.canva.connected ? `<a class="btn canva press" style="flex:1;display:flex;align-items:center;justify-content:center;text-decoration:none" href="${location.protocol}//127.0.0.1:${location.port}/oauth/canva/start?pin=${encodeURIComponent(PIN)}">Conectează Canva</a>` : ''}</div>`
+          ? `<div class="row" style="gap:8px">${I.youtube.configured && !I.youtube.connected ? `<button class="btn red press" style="flex:1" onclick="oauthGo('youtube')">Conectează YouTube</button>` : ''}${I.canva.configured && !I.canva.connected ? `<button class="btn canva press" style="flex:1" onclick="oauthGo('canva')">Conectează Canva</button>` : ''}</div>`
           : '<div class="small">Conectarea se face o singură dată de pe PC-ul panoului (deschide aplicația acolo sau prin AnyDesk).</div>') : ''}
         <div class="small">Unde găsești Client ID / Secret: vezi „GHID-CONTURI.md” din folderul aplicației.</div>
       </div>
-      <div class="glass card"><b style="color:#fff">Inteligență artificială</b>
+      <div class="glass card adm"><b style="color:#fff">Inteligență artificială</b>
         <div class="row"><span class="grow"><b style="color:#fff">Claude</b> <span class="small">· grafică cu text</span><br><span class="small">${S.integrations.ai?.claude ? 'Cheie salvată' : 'Necompletat'}</span></span>${S.integrations.ai?.claude ? '<button class="btn danger press" data-aidel="anthropicKey">Șterge</button>' : ''}</div>
         ${S.integrations.ai?.claude ? '' : '<input id="aiK1" type="password" placeholder="Cheie Claude API (sk-ant-…)" autocomplete="off">'}
         <div class="row"><span class="grow"><b style="color:#fff">OpenAI</b> <span class="small">· imagini (opțional)</span><br><span class="small">${S.integrations.ai?.images ? 'Cheie salvată' : 'Necompletat'}</span></span>${S.integrations.ai?.images ? '<button class="btn danger press" data-aidel="openaiKey">Șterge</button>' : ''}</div>
@@ -872,15 +960,23 @@ function openSettings() {
         ${S.integrations.ai?.claude && S.integrations.ai?.images ? '' : '<button class="btn pri press" id="aiKSave">Salvează cheile</button>'}
         <div class="small">Cheia Claude: platform.claude.com → API Keys. Cheia OpenAI: platform.openai.com → API keys. Se plătește doar ce folosești (câțiva cenți pe slide).</div>
       </div>
-      <div class="glass card"><b style="color:#fff">Parola de acces</b><div class="mut">Dacă deschizi aplicația de oriunde (prin internet), pune o parolă lungă în locul PIN-ului de 6 cifre. Minim 6 caractere, recomandat 12+, fără diacritice și fără spații.</div>
-        <input id="sPin1" type="password" placeholder="Parola nouă" autocomplete="new-password" autocapitalize="off" maxlength="64">
+      <div class="glass card adm"><b style="color:#fff">Actualizări</b><div class="mut" id="upBody">Verific…</div></div>
+      <div class="glass card adm" id="remoteCard"><b style="color:#fff">Acces de oriunde</b><div class="mut" id="rmBody">Verific…</div></div>
+      <div class="glass card adm"><b style="color:#fff">Securitate</b>
+        <div class="mut">Parola administratorului (acces complet). Pentru link public: minim 10 caractere, cu litere și cifre. Fără diacritice și fără spații.</div>
+        <input id="sPin1" type="password" placeholder="Parola nouă de administrator" autocomplete="new-password" autocapitalize="off" maxlength="64">
         <input id="sPin2" type="password" placeholder="Repetă parola" autocomplete="new-password" autocapitalize="off" maxlength="64">
         <button class="btn pri press" id="sPinSave">Schimbă parola</button>
-        <div class="small">Pe celelalte telefoane va trebui introdusă parola nouă.</div>
+        <div class="mut" style="margin-top:8px"><b style="color:#fff">PIN operator</b> (opțional) — pentru colegii care doar pun anunțuri și controlează panoul, fără acces la setări.</div>
+        <div class="row" style="gap:8px"><input id="sOp" type="password" inputmode="numeric" placeholder="PIN operator (min. 4)" maxlength="32" class="grow"><button class="btn press" id="sOpSave">Salvează</button></div>
+        <button class="btn press" id="sOpDel" style="display:none">Șterge PIN-ul operatorului</button>
+        <button class="btn danger press" id="sKick">Deconectează toate celelalte telefoane</button>
       </div>
-      <div class="glass card"><b style="color:#fff">Conectează telefonul</b><div id="sInfo" class="mut">…</div>
+      <div class="glass card"><b style="color:#fff">Conectează telefonul (în aceeași rețea Wi-Fi)</b><div id="sInfo" class="mut">${isAdmin() ? '…' : 'Cere administratorului adresa și PIN-ul.'}</div>
         <div class="row" style="gap:8px">${localStorage.getItem('panou.ios') ? '<a class="btn press" style="flex:1;display:flex;align-items:center;justify-content:center;text-decoration:none" href="capacitor://localhost/?schimba=1">Schimbă PC-ul panoului</a>' : ''}<button class="btn danger press" id="sOut" style="flex:1">Ieșire</button></div></div>`;
-    api('GET', '/api/info').then(i => { const el = $('#sInfo'); if (el) el.innerHTML = `Pe iPhone deschide (sau pune în aplicația Panou):<br>${i.addresses.map(a => `<b style="color:#fff">http://${a}:${i.port}</b>`).join('<br>') || '—'}<br>PIN / parolă: <b style="color:#fff;letter-spacing:1px">${esc(i.pin)}</b><br><span class="small">De acasă: adresa Tailscale a PC-ului (vezi ghidul).</span>`; }).catch(() => {});
+    if (isAdmin()) api('GET', '/api/info').then(i => { const el = $('#sInfo'); if (el) el.innerHTML = `Pe telefon deschide în Safari / Chrome:<br>${i.addresses.map(a => `<b style="color:#fff">http://${a}:${i.port}</b>`).join('<br>') || '—'}<br>${i.initialPin ? `PIN inițial: <b style="color:#fff;letter-spacing:1px">${esc(i.initialPin)}</b>` : 'Parola: cea setată la Securitate'}<br><span class="small">Din afara rețelei: vezi „Acces de oriunde” mai sus.</span>`; }).catch(() => {});
+    if (isAdmin()) { drawRemote(); drawUpdate(); api('GET', '/api/me').then(m => { const d = $('#sOpDel'); if (d) d.style.display = m.operatorSet ? '' : 'none'; }).catch(() => {}); }
+    $$('#stBody .adm').forEach(el => el.style.display = isAdmin() ? '' : 'none');
     $('#sClk').onclick = () => { settings({ showClock: !S.settings.showClock }); draw(); };
     let tkT; $('#sTk').oninput = e => { clearTimeout(tkT); tkT = setTimeout(() => settings({ ticker: e.target.value }), 500); };
     $('#sArea').onclick = () => { settings({ area: { x: +$('#ax').value, y: +$('#ay').value, w: +$('#aw').value, h: +$('#ah').value } }); toast('Zona aplicată pe panou'); };
@@ -899,22 +995,129 @@ function openSettings() {
       try { await api('PUT', '/api/ai-keys', b); toast('Cheile au fost salvate'); } catch (e) { toast(e.message); }
     };
     $$('[data-aidel]').forEach(x => x.onclick = () => api('PUT', '/api/ai-keys', { [x.dataset.aidel]: null }).then(() => toast('Cheie ștearsă')).catch(e => toast(e.message)));
-    $('#sPinSave').onclick = async () => {
+    const ps = $('#sPinSave');
+    if (ps) ps.onclick = async () => {
       const a = $('#sPin1').value.trim(), b = $('#sPin2').value.trim();
       if (a.length < 6) return toast('Parola trebuie să aibă minim 6 caractere');
       if (a !== b) return toast('Cele două parole nu sunt la fel');
       if (!/^[\x21-\x7e]+$/.test(a)) return toast('Fără spații și fără diacritice (ă, â, î, ș, ț)');
-      try { await api('POST', '/api/pin', { pin: a }); PIN = a; localStorage.setItem('panou.pin', a); $('#sPin1').value = $('#sPin2').value = ''; toast('Parola a fost schimbată'); draw(); }
+      try { await api('POST', '/api/password', { pin: a }); $('#sPin1').value = $('#sPin2').value = ''; toast('Parola a fost schimbată. Celelalte telefoane vor cere parola nouă.'); drawRemote(); }
       catch (e) { toast(e.message); }
     };
+    const os_ = $('#sOpSave');
+    if (os_) os_.onclick = async () => { try { await api('POST', '/api/operator-pin', { pin: $('#sOp').value.trim() }); $('#sOp').value = ''; $('#sOpDel').style.display = ''; toast('PIN operator salvat'); } catch (e) { toast(e.message); } };
+    const od = $('#sOpDel');
+    if (od) od.onclick = async () => { try { await api('POST', '/api/operator-pin', { pin: null }); od.style.display = 'none'; toast('PIN operator șters'); } catch (e) { toast(e.message); } };
+    const kk = $('#sKick');
+    if (kk) kk.onclick = async () => { try { await api('DELETE', '/api/sessions'); toast('Toate celelalte dispozitive au fost deconectate'); } catch (e) { toast(e.message); } };
   };
   openView('settings', `<div class="row"><button class="back" data-close>‹ Înapoi</button></div><div class="h1">Setări</div><div id="stBody" style="display:flex;flex-direction:column;gap:12px"></div>`, false, draw);
   view.refresh = () => { if (!document.activeElement?.matches('input,textarea')) draw(); };
 }
 
+// ---------- stare panou (pentru operator) + actualizare disponibilă ----------
+async function pollHealth() {
+  if (!TOKEN || !S) return;
+  try {
+    const h = await api('GET', '/api/health'), w = [];
+    if (!h.playerOnline) w.push('Ecranul panoului nu e pornit.');
+    else if (h.lastBeat != null && h.lastBeat > 60) w.push('Ecranul panoului nu răspunde de ' + h.lastBeat + ' s (se repornește singur).');
+    if (h.display?.chosenMissing) w.push('Ecranul ales nu e conectat — imaginea merge pe alt ecran.');
+    else if (h.display?.onlyPrimary) w.push('Un singur ecran conectat — verifică cablul HDMI spre panou.');
+    if (h.cpu && h.cpu.cpu > 90) w.push('Procesorul e foarte încărcat (' + h.cpu.cpu + '%).');
+    const el = $('#healthWarn'); el.innerHTML = w.map(esc).join('<br>'); el.classList.toggle('hidden', !w.length);
+  } catch {}
+  if (isAdmin()) try {
+    const u = await api('GET', '/api/update'), b = $('#updBanner');
+    const show = u.auto ? u.state === 'ready' : u.available;
+    b.classList.toggle('hidden', !show);
+    if (show) { b.innerHTML = `<span class="grow">Versiune nouă: <b>${esc(u.auto ? u.version : u.latest)}</b></span><button class="btn pri press" style="min-height:34px">Vezi</button>`; b.querySelector('button').onclick = () => openSettings(); }
+  } catch {}
+}
+setInterval(pollHealth, 20000); setTimeout(pollHealth, 2500);
+
+// ---------- Actualizări ----------
+let upTimer = null;
+async function drawUpdate(action) {
+  const el = $('#upBody'); if (!el) return;
+  let u;
+  try { if (action) await api('POST', '/api/update', { action }); u = await api('GET', '/api/update'); } catch (e) { toast(e.message); try { u = await api('GET', '/api/update'); } catch { return; } }
+  if (!$('#upBody')) return;
+  const st = {
+    checking: 'Verific dacă există o versiune nouă…',
+    downloading: `Se descarcă versiunea ${esc(u.version)}… ${u.percent || 0}%`,
+    ready: `Versiunea <b style="color:#fff">${esc(u.version)}</b> e descărcată. Se instalează singură noaptea (3–5) sau când panoul e oprit — ori apasă acum.`,
+    latest: 'Ai ultima versiune.', error: 'Eroare la verificare: ' + esc(u.error), idle: '',
+  }[u.state] || '';
+  let h = `Versiunea instalată: <b style="color:#fff">${esc(u.current)}</b>${u.latest ? ` · cea mai nouă: <b style="color:#fff">${esc(u.latest)}</b>` : ''}`;
+  if (u.justUpdated) h += `<div style="color:var(--grn);margin-top:6px">✓ Actualizat de la ${esc(u.justUpdated.from)} la ${esc(u.justUpdated.to)}. Datele au fost păstrate.</div>`;
+  if (u.auto) {
+    h += st ? `<div style="margin-top:6px">${st}</div>` : '';
+    if (u.state === 'downloading') h += `<div style="height:6px;border-radius:3px;background:rgba(255,255,255,.1);margin-top:8px;overflow:hidden"><div style="height:100%;width:${u.percent || 0}%;background:var(--acc)"></div></div>`;
+    h += u.state === 'ready' ? `<button class="btn pri press" id="upGo" style="width:100%;margin-top:10px">Instalează acum și repornește</button>` : `<button class="btn press" id="upChk" style="width:100%;margin-top:10px">Verifică acum</button>`;
+    h += `<div class="small" style="margin-top:6px">Se păstrează playlistul, fișierele și setările. Înainte de instalare se face o copie de siguranță a datelor.</div>`;
+  } else if (u.available) {
+    h += `<div style="margin-top:6px">Există o versiune nouă. ${u.download ? `<a class="btn pri press" style="display:flex;align-items:center;justify-content:center;text-decoration:none;margin-top:8px" href="${esc(u.download)}" target="_blank">Descarcă ${esc(u.latest)}</a>` : ''}<a class="btn press" style="display:flex;align-items:center;justify-content:center;text-decoration:none;margin-top:8px" href="${esc(u.page)}" target="_blank">Vezi ce e nou</a></div>
+      <div class="small" style="margin-top:6px">Pe Mac se instalează manual (trage aplicația peste cea veche). Datele rămân.</div>`;
+  } else if (u.latest) h += '<div style="margin-top:6px">Ai ultima versiune.</div>';
+  h += `<a class="small" style="display:block;margin-top:8px;color:var(--mut)" href="https://github.com/gheorgheturcu97-eng/afisare-drutu/releases" target="_blank">Versiuni anterioare (dacă vrei să revii la una mai veche)</a>`;
+  el.innerHTML = h;
+  const go = $('#upGo'); if (go) go.onclick = () => { if (confirm('Aplicația se închide câteva secunde, se actualizează și pornește din nou. Continui?')) { go.disabled = true; go.textContent = 'Se instalează…'; drawUpdate('install'); } };
+  const ck = $('#upChk'); if (ck) ck.onclick = () => drawUpdate('check');
+  clearTimeout(upTimer);
+  if (['checking', 'downloading'].includes(u.state)) upTimer = setTimeout(() => { if ($('#upBody') && view?.name === 'settings') drawUpdate(); }, 2000);
+}
+
+// ---------- Acces de oriunde (Tailscale) ----------
+let rmTimer = null;
+async function drawRemote(act) {
+  const el = $('#rmBody'); if (!el) return;
+  let r;
+  try { r = act ? await api('POST', '/api/remote', act) : await api('GET', '/api/remote'); } catch (e) { el.textContent = e.message; return; }
+  if (!$('#rmBody')) return;
+  if (r.open) window.open(r.open, '_blank');
+  if (r.enableUrl) window.open(r.enableUrl, '_blank');
+  if (r.error) toast(r.error);
+  const onPC = ['localhost', '127.0.0.1'].includes(location.hostname);
+  const seen = r.remoteSeen != null && r.remoteSeen < 30 ? `<div style="color:var(--grn);margin-top:6px">● Un telefon s-a conectat de la distanță acum ${r.remoteSeen} s</div>` : '';
+  let h = '';
+  if (!r.installed) {
+    h = `Ca să deschizi aplicația de oriunde (date mobile, alt Wi-Fi), pe PC-ul panoului trebuie instalat <b>Tailscale</b> (gratuit), o singură dată.
+      ${onPC ? `<button class="btn pri press" id="rmInstall" style="width:100%;margin-top:10px">${r.platform === 'win32' ? 'Instalează Tailscale' : 'Descarcă Tailscale'}</button><div class="small" style="margin-top:6px">După instalare: deschide Tailscale, apasă <b>Log in</b> (cu Google sau Apple), apoi revino aici.</div>` : '<div class="small" style="margin-top:6px">Instalarea se face de pe PC-ul panoului.</div>'}`;
+  } else if (!r.running) {
+    h = `Tailscale e instalat, dar nu ești conectat (${esc(r.state)}). Deschide aplicația Tailscale de lângă ceas și apasă <b>Log in</b>.
+      ${r.loginUrl ? `<button class="btn pri press" id="rmLogin" style="width:100%;margin-top:10px">Conectează-te la Tailscale</button>` : ''}<button class="btn press" id="rmRe" style="width:100%;margin-top:8px">Verifică din nou</button>`;
+  } else if (!r.serve) {
+    h = `Tailscale e conectat. Alege cum vrei să intri de pe telefon:
+      <button class="btn pri press" id="rmServe" style="width:100%;margin-top:10px">Acces privat (recomandat)</button>
+      <div class="small" style="margin:4px 2px 8px">Merge doar pe telefoanele pe care instalezi și aplicația Tailscale (gratuită), cu același cont.</div>
+      <button class="btn press" id="rmFunnel" style="width:100%" ${r.strongPassword ? '' : 'disabled'}>Link public — fără aplicație pe telefon</button>
+      <div class="small" style="margin:4px 2px">Oricine are linkul ajunge la ecranul de parolă. ${r.strongPassword ? 'Parola ta e destul de puternică.' : '<b style="color:#ffb340">Întâi pune o parolă puternică la Securitate (min. 10 caractere, litere + cifre).</b>'}</div>`;
+  } else {
+    h = `<div style="color:var(--grn)">● Pornit — ${r.funnel ? '<b>link public</b> (merge din orice browser)' : '<b>acces privat</b> (telefonul are nevoie de aplicația Tailscale)'}</div>
+      <div style="display:flex;gap:12px;align-items:center;margin-top:10px">${r.qr ? `<div style="width:120px;flex:none;background:#fff;border-radius:10px;padding:6px">${r.qr}</div>` : ''}
+      <div class="grow" style="min-width:0"><div class="small">Scanează codul cu telefonul sau deschide:</div><b style="color:#fff;word-break:break-all">${esc(r.url)}</b>
+      <button class="btn press" id="rmCopy" style="width:100%;margin-top:8px">Copiază linkul</button></div></div>${seen}
+      ${r.funnel ? '' : `<button class="btn press" id="rmFunnel" style="width:100%;margin-top:10px" ${r.strongPassword ? '' : 'disabled'}>Treci la link public</button>`}
+      <button class="btn danger press" id="rmOff" style="width:100%;margin-top:8px">Oprește accesul de oriunde</button>`;
+  }
+  el.innerHTML = h;
+  const on = (id, fn) => { const b = $('#' + id); if (b) b.onclick = fn; };
+  const busy = (id, t) => { const b = $('#' + id); if (b) { b.disabled = true; b.textContent = t; } };
+  on('rmInstall', () => { busy('rmInstall', 'Se descarcă…'); drawRemote({ mode: 'install' }).then(() => toast('Urmează pașii instalatorului Tailscale, apoi apasă Log in.')); });
+  on('rmLogin', () => window.open(r.loginUrl, '_blank'));
+  on('rmRe', () => drawRemote());
+  on('rmServe', () => { busy('rmServe', 'Pornesc… (până la 25 s)'); drawRemote({ mode: 'serve' }); });
+  on('rmFunnel', () => { if (!confirm('Link public: oricine are linkul poate ajunge la ecranul de parolă. Continui?')) return; busy('rmFunnel', 'Pornesc… (până la 25 s)'); drawRemote({ mode: 'funnel', confirm: true }); });
+  on('rmOff', () => { busy('rmOff', 'Opresc…'); drawRemote({ mode: 'off' }); });
+  on('rmCopy', () => { navigator.clipboard?.writeText(r.url).then(() => toast('Link copiat')); });
+  clearTimeout(rmTimer);
+  if (r.serve) rmTimer = setTimeout(() => { if ($('#rmBody') && view?.name === 'settings') drawRemote(); }, 5000);
+}
+
 // ================= tastatură (PC) =================
 document.addEventListener('keydown', e => {
-  if (e.target.closest('input,textarea,select') || !PIN) return;
+  if (e.target.closest('input,textarea,select') || !TOKEN) return;
   const mod = isMac ? e.metaKey : e.ctrlKey;
   if (e.key === 'Escape') { closeMenu(); closeView(); }
   if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }

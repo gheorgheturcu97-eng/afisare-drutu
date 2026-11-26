@@ -50,9 +50,15 @@ function loadPdfJs() {
   if (pdfLib) return pdfLib;
   pdfLib = new Promise((ok, fail) => {
     const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-    s.onload = () => { const l = window['pdfjs-dist/build/pdf']; l.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; ok(l); };
-    s.onerror = fail; document.head.appendChild(s);
+    // întâi copia locală (merge fără internet), apoi CDN ca rezervă
+    const srcs = [['/vendor/pdf.min.js', '/vendor/pdf.worker.min.js'], ['https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js']];
+    const tryIt = (k) => {
+      if (k >= srcs.length) return fail(new Error('pdf.js indisponibil'));
+      const s = document.createElement('script'); s.src = srcs[k][0];
+      s.onload = () => { const l = window['pdfjs-dist/build/pdf']; l.GlobalWorkerOptions.workerSrc = srcs[k][1]; ok(l); };
+      s.onerror = () => tryIt(k + 1); document.head.appendChild(s);
+    };
+    tryIt(0);
   });
   return pdfLib;
 }
@@ -144,7 +150,7 @@ function play(item, mode, onDone) {
   const old = cur;
   cur = { layer, item, mode, cleanup() { done = true; timers.forEach(clearTimeout); try { yt && yt.destroy(); } catch {} const v = layer.querySelector('video'); if (v) { v.pause(); v.removeAttribute('src'); v.load(); } layer.remove(); } };
   if (old) setTimeout(() => old.cleanup(), 700);
-  if (mode !== 'dark') fetch('/api/now', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: item.id || '', text: (item.title || item.text || item.url || '').slice(0, 200) }) }).catch(() => {});
+  if (mode !== 'dark') fetch('/api/now', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Panou': 'player' }, body: JSON.stringify({ id: item.id || '', text: (item.title || item.text || item.url || '').slice(0, 200) }) }).catch(() => {});
 }
 
 const playlist = () => (state?.items || []).filter(i => P.activeAt(i, new Date()));
@@ -213,6 +219,19 @@ setInterval(() => { document.getElementById('clock').textContent = new Date().to
 // ---------- conexiune ----------
 const msg = document.getElementById('msg');
 const es = new EventSource('/api/events?role=player');
+// semn de viață pentru paza aplicației (dacă ecranul se blochează, aplicația îl repornește)
+setInterval(() => {
+  const it = cur && cur.mode !== 'dark' ? cur.item : null;
+  fetch('/api/heartbeat', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Panou': 'player' },
+    body: JSON.stringify({ id: it?.id || '', text: it ? (it.title || it.text || it.url || '').slice(0, 200) : '', mem: performance.memory?.usedJSHeapSize || 0 }) }).catch(() => {});
+}, 10000);
+// preîncărcare: următoarea poză din listă e deja în memorie când îi vine rândul
+const preloaded = new Map();
+setInterval(() => {
+  const list = playlist(); if (!list.length) return;
+  const i = list.findIndex(x => x.id === lastId), nx = list[(i + 1) % list.length];
+  if (nx && nx.type === 'image' && nx.url && !preloaded.has(nx.url)) { const im = new Image(); im.src = nx.url; preloaded.set(nx.url, im); if (preloaded.size > 20) preloaded.delete(preloaded.keys().next().value); }
+}, 3000);
 es.addEventListener('state', e => { msg.textContent = ''; onState(JSON.parse(e.data)); });
 es.addEventListener('control', e => {
   const { cmd } = JSON.parse(e.data);

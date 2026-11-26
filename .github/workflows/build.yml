@@ -20,9 +20,9 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            cmd: npx electron-builder --win
-          - os: macos-latest
-            cmd: npx electron-builder --mac
+            cmd: npx electron-builder --win --publish never
+          - os: macos-14
+            cmd: npx electron-builder --mac --publish never
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -55,7 +55,11 @@ jobs:
             **Windows:** `.exe` = instalator, `.zip` = fără instalare.
             **Mac:** `arm64` = M1–M4, `x64` = Intel. La prima deschidere: Setări sistem → Confidențialitate și securitate → Deschide oricum.
             **iPhone:** vezi GHID-IPHONE.md.
+            **Acces de oriunde:** instalează și Tailscale (gratuit) pe PC-ul panoului — din aplicație: Setări → Acces de oriunde → Instalează Tailscale, sau de pe https://tailscale.com/download
+            Aplicația instalată se actualizează singură (Windows). Datele (playlist, fișiere, setări) se păstrează.
           files: |
             dist/*.exe
             dist/*.dmg
             dist/*.zip
+            dist/*.blockmap
+            dist/latest*.yml
